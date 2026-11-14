@@ -1,0 +1,486 @@
+<doc>
+  <h1 id="vYTDouRq">Nautilus：基于 Odin + Skald 的本地 DICOM 阅片器设计（v0.1）</h1>
+  <p id="hjQO8u2F">第 1 轮的 6 个问题已全部确认并合入本设计规范。你在核心诉求中明确了四条底线：<mark>拖入整个 CT 文件夹秒开看片、打开 DX/DR 等单张大图像秒开、验证 odin-dcm 对疑难临床片源的解码表现、滚轮翻页与调窗零卡顿零掉帧</mark>。有异议请在对应段落批注；确认无误后我将本规范固化到 <code>docs/ryugi/specs/2026-11-13-nautilus-viewer-design.md</code> 并开始实现。</p>
+  <h2 id="psacWMMA">1. 目标、非目标与失败红线</h2>
+  <p id="NvJNRwta">Nautilus 是基于 <b>Odin</b> 语言与 <b>Skald</b>（SDL3 + Vulkan 1.3，Elm 架构）构建的纯原生桌面 DICOM 2D 序列阅片与诊断工作台。它既是日常秒开临床 CT/MR 序列与 DX/DR/MG 大图的本地看片工具，也是直观检验 <code>odin-dcm</code> 在真实疑难临床语料（<code>corpus_clin</code> / <code>corpus_ext</code>）上解析、字符集、压缩码流解码与 VOI 显示管线表现的桌面诊断前端。</p>
+  <alert id="ul4KnmHR" type="important">
+    <p><b>硬性性能与体验红线（违反任一即视为失败）</b>：1) 拖入 690 张切片的 CT 检查目录，首张图像在 <b>&lt;200 ms</b> 内上屏，目录树后台秒级成型且主线程零冻结；2) 打开单张 26 MB+ 的 DX/DR/MG 大图（如 3500×4300 16-bit）立即响应；3) 鼠标滚轮快速翻阅序列切片无阻塞、不乱序；4) 鼠标拖拽实时调节窗宽窗位（WL/WW）全程保持 <b>60+ fps</b>（单帧 CPU 映射 + GPU 更新 <b>&lt;4 ms</b>，大图也不掉帧）；5) 静止时事件驱动休眠，<b>空闲 CPU 占用 0%</b>。</p>
+  </alert>
+  <table id="VcXosTdr">
+    <tr>
+      <th>
+        <p>维度</p>
+      </th>
+      <th>
+        <p>v0.1 纳入范围（Goals）</p>
+      </th>
+      <th>
+        <p>v0.1 明确不做（Non-Goals / Anti-Goals）</p>
+      </th>
+    </tr>
+    <tr>
+      <td>
+        <p><b>文件与序列组织</b></p>
+      </td>
+      <td>
+        <p>支持打开/拖放单个或多个 <code>.dcm</code> 文件及整个文件夹（递归扫描）；按 <code>Patient → Study → Series → Instance</code> 四级聚合，序列内按 <code>InstanceNumber</code> / <code>SliceLocation</code> / 文件名稳定排序；兼容无 <code>.dcm</code> 后缀或无 132B Preamble 的裸数据集文件。</p>
+      </td>
+      <td>
+        <p>不接入 PACS 网络协议（DIMSE C-FIND / C-MOVE / DICOMweb）；不引入 SQLite 外部数据库，索引纯内存常驻。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>2D 阅片与多视口</b></p>
+      </td>
+      <td>
+        <p>支持 <code>1×1</code>、<code>1×2</code>、<code>2×2</code> 视口网格；支持序列切片滚轮翻页、多帧（Multi-frame Cine）播放/暂停与帧率控制；支持拖拽调窗、CT 常用窗预设（F1–F6）、缩放、平移、90° 旋转、水平/垂直翻转、反相（Invert）。</p>
+      </td>
+      <td>
+        <p>不做 3D 容积重建（正交 MPR 三视图重采样、MIP、VR 体渲染）；不做跨序列三维空间定位线（Scout Line）。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>临床叠字与测量</b></p>
+      </td>
+      <td>
+        <p>视口四角 HUD 叠字（患者/检查/序列信息、层厚与位置、窗宽窗位、Rescale 参数、解码耗时、比例尺）；鼠标悬停实时显示像素坐标 <code>(X, Y)</code> 与原始存储值 / HU 值；支持线段长度（自动识别 <code>PixelSpacing</code> / <code>ImagerPixelSpacing</code> 换算 mm，无校准时标 px）与三点角度测量。</p>
+      </td>
+      <td>
+        <p>不做复杂 ROI 面积/直方图统计；不将标注回写为 DICOM Grayscale Softcopy Presentation State (GSPS) 或修改原 <code>.dcm</code> 文件。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>odin-dcm 诊断面板</b></p>
+      </td>
+      <td>
+        <p>右侧可折叠检查器：1) <b>Tag 树标签页</b>（按 Tag 号/关键字/值搜索过滤，支持展开 Sequence/Item，GB18030/UTF-8 解码，显示 VR、偏移量与字节长度）；2) <b>解码诊断标签页</b>（Transfer Syntax、像素几何属性、封装码流 Fragment 列表、解析/解码耗时与 <code>dicom.document_error</code> 精确定位）。</p>
+      </td>
+      <td>
+        <p>不做十六进制二进制编辑器；不在主线程直接同步解析任何未知文件。</p>
+      </td>
+    </tr>
+  </table>
+  <h2 id="kt4eV91q">2. 已确定事项（第 1 轮决议与架构基准）</h2>
+  <ul id="M2tbZosp">
+    <li><b>语言与 UI 框架</b>：使用 Odin 语言 + Skald 框架（SDL3 + Vulkan 1.3，Elm 架构 <code>State / Msg / update / view</code>）。（你的决定）</li>
+    <li><b>仓库与依赖独立（vendor-copy）</b>：将 <code>../odin-dcm/dicom</code> 与 <code>../exam/counter/vendor/skald</code> 完整拷贝至 <code>Nautilus/vendor/dicom</code> 与 <code>Nautilus/vendor/skald</code>（根目录附带 <code>SDL3.dll</code>），使 Nautilus 成为零外部路径依赖的自包含工程。（你的决定）</li>
+    <li><b>首版定位（series-workstation）</b>：构建 2D 序列阅片 + <code>odin-dcm</code> Tag/解码诊断工作台，兼顾临床序列流利看片与疑难片源诊断。（按推荐采纳）</li>
+    <li><b>核心场景与红线（core-moment）</b>：拖入整个 CT 文件夹秒开、打开 DX/DR 单张大图秒开、验证疑难临床片源解码表现；滚轮翻页卡顿或调窗掉帧即视为失败。（你的决定）</li>
+    <li><b>序列索引与内存策略（meta-first-lru）</b>：后台先扫元数据构建 <code>Patient → Study → Series</code> 树并排序，像素按需解码 + 滑动窗口预取 + 双上限（帧数与字节数）LRU 缓存。（按推荐采纳）</li>
+    <li><b>实时调窗计算路径（cpu-raw-cache）</b>：主线程缓存解码后的原始像素切片（16-bit/8-bit），拖拽调窗时在 CPU 端重映射为 RGBA8 并通过 <code>skald.image_update_pixels</code> 原地更新 GPU 纹理。（按推荐采纳）</li>
+    <li><b>视口与工具集（single-plus-2x2）</b>：支持单视口与 <code>1×2</code> / <code>2×2</code> 对比网格，内置调窗预设、缩放平移、旋转翻转、反相、实时 HU/像素值探针及长度/角度测量。（按推荐采纳）</li>
+    <li><b>UI 整体架构（g1 → g1-a）</b>：采用放射科暗房固定三栏工作台 <ref artboard="nautilus-ui" to="xfyvBOtbcqwwyVa0eitnB" board="g1-a">A · 放射科暗房三栏工作台</ref>（纯黑 <code>#000000</code> 视口与 <code>#080A0F</code> 低眩光外框隔离，左右面板不遮挡四角临床 HUD）。（按推荐采纳）</li>
+    <li><b>左侧序列导航密度（g2 → g2-a）</b>：采用紧凑层级树 + 模态胶囊 + 实时切片进度条 <ref artboard="nautilus-ui" to="xfyvBOtbcqwwyVa0eitnB" board="g2-a">A · 紧凑层级树</ref>（零缩略图解码开销，20–30 ms 即刻生成）。（按推荐采纳）</li>
+    <li><b>视口临床叠字与探针密度（g3 → g3-a）</b>：采用标准四象限临床 HUD + 物理比例尺 + 琥珀金探针胶囊 <ref artboard="nautilus-ui" to="xfyvBOtbcqwwyVa0eitnB" board="g3-a">A · 标准四象限临床 HUD</ref>。（按推荐采纳）</li>
+    <li><b>右侧解码诊断与异常样本呈现（g4 → g4-a）</b>：采用结构化解码诊断面板（耗时瀑布条 + <code>Pixel_Info</code> 矩阵 + Fragment 表）及视口内异常样本诊断卡 <ref artboard="nautilus-ui" to="xfyvBOtbcqwwyVa0eitnB" board="g4-a">A · 结构化解码诊断面板</ref>。（按推荐采纳）</li>
+  </ul>
+  <h2 id="zW0gV6wz">3. 总体架构与三大不变量</h2>
+  <mermaid id="Jzfz4KHn">flowchart TB
+  subgraph UI[&quot;主线程（Skald Elm Loop: update + view + Vulkan Renderer）&quot;]
+    Input[&quot;SDL3 输入：拖放 / 滚轮 / 鼠标拖拽 / 快捷键&quot;] --&gt; Update[&quot;update(state, msg)&quot;]
+    Update --&gt; State[&quot;App_StateStudy 树 + 4 视口状态 + Raw Frame LRU Cache + Tag 快照&quot;]
+    State --&gt; LUT[&quot;显示管线：16-bit 64K LUT / render_gray8 / rgb8&quot;]
+    LUT --&gt; Tex[&quot;skald.image_update_pixels (mip_count = 1)原地刷新 nautilus://viewport/0..3&quot;]
+    Tex --&gt; Canvas[&quot;skald.canvas纹理变换绘制 + 四角 HUD 叠字 + 十字探针 + 测量矢量&quot;]
+  end
+  subgraph Workers[&quot;后台工作线程（skald.cmd_thread，独立 dicom.Document）&quot;]
+    Scan[&quot;目录扫描器快速提取 Header Tags + 首张切片抢先派发&quot;]
+    Decode[&quot;帧解码器dicom.pixel_decode_frame + 邻近帧预取&quot;]
+    Inspect[&quot;Tag 树提取器扁平化可视节点 + Fragment / Error 诊断快照&quot;]
+  end
+  Update --&gt;|&quot;cmd_thread (按值快照 + request_seq)&quot;| Scan
+  Update --&gt;|&quot;cmd_thread (按值快照 + request_seq)&quot;| Decode
+  Update --&gt;|&quot;cmd_thread (按值快照)&quot;| Inspect
+  Scan --&gt;|&quot;SDL_PushEvent 唤醒&quot;| Update
+  Decode --&gt;|&quot;SDL_PushEvent 唤醒&quot;| Update
+  Inspect --&gt;|&quot;SDL_PushEvent 唤醒&quot;| Update</mermaid>
+  <p id="-NimyJ-E">为确保多线程安全与 60+ fps 响应，全工程严格执行三条不变量：</p>
+  <ol id="99IkZaxT">
+    <li><b>主线程零磁盘 I/O 与零解码</b>：主线程绝不调用 <code>os.read_entire_file</code>、<code>dicom.document_open_file</code> 或 <code>dicom.pixel_decode_frame</code>。所有文件打开、目录遍历、Tag 树构建与像素解压均通过 <code>skald.cmd_thread</code> 在后台 OS 线程执行。</li>
+    <li><b>跨线程零共享可变状态</b>：每个后台任务在栈上初始化独立的 <code>dicom.Document</code>（<code>document_init</code> + <code>defer document_destroy</code>），解析/解码完成后立即释放 mmap，将结果深拷贝到持久化堆（<code>context.allocator</code>）封装为 <code>Msg</code> 发回主线程；后台线程严禁触碰 Skald 的 <code>ctx</code>、<code>renderer</code> 或 <code>context.temp_allocator</code>。</li>
+    <li><b>序列号（request_seq）防过期与去重</b>：每个视口维护单调递增的 <code>request_seq: u64</code>。当用户快速滚轮翻页或切换序列时，<code>update</code> 对比返回消息的 <code>seq</code>：哪怕旧切片解码刚完成，只要不是当前急需帧，也只写入 LRU 缓存而不覆盖当前视口画面，杜绝画面回跳闪烁。</li>
+  </ol>
+  <h2 id="Hg2iNJ1g">4. 核心管线设计（如何兑现「秒开、零卡顿、60fps 调窗」）</h2>
+  <h3 id="lAY8_CQI">4.1 秒开单张大图与 690 文件 CT 目录：抢先首帧 + 后台建树</h3>
+  <p id="r64SetQb"><b>（v0.2 修订）</b>性能红线的计时目标目录钉死为 <code>D:/Odin/odin-dcm/Dcm</code>（693 文件 = 690 张 CT + 1 zip + 2 杂项，杂项用于容错验证）；<code>D:/Odin/corpus_clin</code>（扁平 2915 文件，含 26 MB MG）仅作规模/字符集/多模态回归，<b>不作为红线计时目标</b>；<code>D:/Odin/corpus_ext</code>（163 文件，含 9 个无 Preamble 裸数据集）作解码与边缘回归。若拖入的是包含 690 个文件的 CT 文件夹，等待全扫完再显示首图会有约 100–200 ms 空白期，因此采用<b>「首帧抢先 + 分批建树」</b>两步策略：</p>
+  <ol id="X6bCfuqg">
+    <li><b>单文件或拖放文件列表</b>：立即通过 <code>cmd_thread</code> 为第 1 个文件派发高优先级 <code>Decode_Frame_Req</code>（同时解析该文件的 Tag 树快照），使单张 DX/DR/MG 或 CT 切片在一个解码周期内直接上屏。</li>
+    <li><b>文件夹拖放/打开（多核分片并行扫描）</b>：后台协调线程先收集文件路径列表，<b>遇到第一个合法的 DICOM 图像文件时，立即抢先派发首帧解码上屏（5–15 ms 内可见）</b>；随后将剩余文件均匀切分为 <code>K = min(CPU核心数, 8)</code> 个分片，启动 <code>K</code> 个并行工作线程（<code>core:thread</code>），每个线程仅初始化<b>一个</b>复用的 <code>dicom.Document</code>（稳态 0 堆分配），开启 <code>stop_before_tag = Tag{0x7FE0, 0x0010}</code> 提取轻量级索引字段后立即 <code>document_reset</code> 复用池容量。690 个 CT 文件在 8 核并行下仅需 <b>~20–30 ms</b> 即可完成全量扫描、按 <code>(SeriesNumber, SeriesInstanceUID)</code> 分组及切片排序，一次性将完整 <code>Study_Tree</code> 发回主线程。</li>
+  </ol>
+  <p id="2NWX25F4"><b>早停扫描机制（v0.2 修正机理描述）</b>：<code>parser.odin</code> 的 <code>Parse_Options.stop_before_tag</code> 实际语义是——<code>parse_dataset</code> 在 <b>depth == 0</b> 的循环顶部 <code>peek_tag</code>，当下一个元素 tag ≥ <code>Tag{0x7FE0, 0x0010}</code> 时<b>在读元素头之前</b>直接置 <code>p.stopped = true</code> 返回（parser.odin:140-146）。即 <b>PixelData 元素本身不会被解析注册，<code>parse_fragments</code> 根本不会进入</b>——不是「跳过 Fragment 遍历」，而是「在 PixelData 元素头之前停止」。<code>document_parse_current</code> 对 <code>p.stopped</code> 的提前返回有显式容忍。我们在 <code>vendor/dicom/document.odin</code> 新增 <code>document_open_file_opts(doc, path, stop_before_tag)</code> 把该已有选项透传出来，供目录扫描阶段使用。</p>
+  <h3 id="h7JU65aL">4.2 滚轮翻页零卡顿：双上限 LRU 帧缓存与方向感知预取</h3>
+  <p id="8rJkC2bU">CT 序列单帧（512×512×2B = 512 KB）很小，而乳腺 MG / 胸片 DR 单帧（3500×4300×2B ≈ 30 MB）很大。单一按「帧数」上限做缓存，要么存不下整套 CT，要么在看几张 MG 大图时撑爆内存。因此 <code>Frame_Cache</code> 采用<b>「帧数 + 字节数」双上限 LRU</b>：</p>
+  <ul id="P97faQ3h">
+    <li><b>缓存键</b>：<code>Frame_Key{file_path: string, frame_index: int}</code>（兼容单文件单帧 CT 与单文件多帧 Cine 超声/造影）。</li>
+    <li><b>缓存项（Cached_Frame）</b>：保存 <code>info: dicom.Pixel_Info</code>、解码后的小端原始像素 <code>raw: []u8</code>、<code>rescale_slope: f64</code>、<code>rescale_intercept: f64</code>、数据集默认窗 <code>(default_center, default_width, valid_window)</code>、<code>pixel_spacing: [2]f64</code>、<code>palette_rgb: []u8</code>（仅 Palette Color 时预展开）、<code>decode_ms: f64</code> 与 <code>last_used_tick: u64</code>。</li>
+    <li><b>双上限容量</b>：最大 <b>256 帧</b> 且总原始像素内存不超过 <b>512 MB</b>（512 KB 的 CT 切片可缓存满 256 帧 = 128 MB；30 MB 的 MG/DR 大图自动在 17 张时按 LRU 淘汰最旧帧）。</li>
+    <li>
+      <b>滑动窗口预取（Prefetch）</b>：当视口切到序列的第 <code>i</code> 帧时：
+      <ul>
+        <li>若 <code>Frame_Cache</code> 命中：<b>当帧（0 ms）直接跑 LUT 映射并刷新纹理</b>，滚轮手感丝滑无延迟。</li>
+        <li>若未命中：立即派发第 <code>i</code> 帧的后台解码任务（标记该视口 <code>loading = true</code> 并在保留上一帧画面的同时在角落显示轻量加载指示，避免黑屏闪烁）。</li>
+        <li>一旦第 <code>i</code> 帧就绪上屏，根据最近一次滚轮方向 <code>scroll_dir ∈ {+1, -1}</code>，按步进顺序 <code>i + dir, i + 2*dir, i - dir, i + 3*dir …</code> 最多预取前后 8 帧（仅针对单帧 <code>&lt;= 4 MB</code> 的序列开启自动预取）。针对 JPEG 2000（J2K 单帧纯 Odin 标量解码约 139 ms）或 JPEG 等高开销压缩序列，预取支持最多 <b>4 个后台解码线程并发执行</b>，利用多核并行隐藏单帧标量解码延迟。</li>
+      </ul>
+    </li>
+  </ul>
+  <h3 id="pool-v2">4.2.1 并发模型（v0.2 修订：自建持久 Decode_Pool）</h3>
+  <p id="xB2RaBGd"><b>问题</b>：Skald 的 <code>cmd_thread</code>（thread.odin）每次调用创建一个新 OS 线程、无池、一调用一 Msg，且要求每任务自备 <code>document_init/destroy</code>。4 路预取若靠 4 次 <code>cmd_thread</code>，滚轮翻页时每秒几十次线程创建销毁本身就是卡顿源。</p>
+  <p id="BdzFyIAC"><b>方案</b>：Nautilus 自建常驻 <code>Decode_Pool</code>（<code>src/decode_pool.odin</code>）：启动时创建 <code>min(4, 核数-1)</code> 个常驻 worker，每个 worker <b>独占一个</b> <code>dicom.Document</code> 进程级复用（<code>document_reset</code>，稳态 0 分配）；互斥锁任务链表按 <code>Frame_Key</code> 去重、当帧优先；完成后深拷贝到持久堆并 <code>SDL_PushEvent</code> 回投。<code>cmd_thread</code> 仅用于一次性低频任务（目录扫描分片、Tag 提取、诊断快照）。新增 <code>decode_pool_test.odin</code> 覆盖并发竞争 / 去重 / Document 复用污染 / LRU 淘汰后所有权 / 退出 shutdown 五类 use-after-free 高发场景。</p>
+  <h3 id="budget-v2">4.1.1 / 4.3.1 预算账（v0.2 新增）</h3>
+  <p id="37t6-5sd"><b>首帧红线</b>（t₀ = SDL 拖放事件进入主循环，冷启动单列 ≤100 ms 不叠加）：CT 未压缩首帧合计 ≤30 ms（派发 8 + 解析 15 + 拷贝 2 + LUT 1 + 上传 4）；J2K 本机实测 84.6 ms/帧（README 口径 139 ms 为设计上限）→ J2K 首帧 ≤165 ms，仍在 200 ms 内。</p>
+  <p id="9QRYouKT"><b>松手回全分辨率</b>（MG 实测 3328×4096×16-bit = 13.6 MP，确认超 2 MP 阈值，代理必启用）：LUT 3 ms + memcpy 3 ms + 上传 7–14 ms（PCIe/核显）= <b>13–20 ms ≤ 33 ms（2 帧）红线</b>；核显超限时降级为上下两半两帧上传、期间持续显示 proxy。</p>
+  <h3 id="ZCnGJxpm">4.3 鼠标拖拽调窗 60+ fps（含 26 MB+ DX/DR/MG 大图不掉帧）</h3>
+  <p id="ToRxg6mv">我们在排查 <code>odin-dcm/dicom/render.odin</code> 与 <code>vendor/skald/image.odin</code> 时发现了两个会导致大图（如 <code>corpus_clin</code> 中 26 MB 的 MG 乳腺片，约 1350 万像素）在调窗时掉帧的瓶颈，并在设计中直接根除：</p>
+  <table id="2EtbWtQ2">
+    <tr>
+      <th>
+        <p>潜在瓶颈点</p>
+      </th>
+      <th>
+        <p>原因分析（实测代码路径）</p>
+      </th>
+      <th>
+        <p>Nautilus 根治方案</p>
+      </th>
+    </tr>
+    <tr>
+      <td>
+        <p><b>1. CPU 逐像素浮点窗化计算</b></p>
+      </td>
+      <td>
+        <p><code>dicom.render_gray8</code> 对每个像素执行一次 <code>render_normalize</code> + <code>f64</code> 乘加与除法。512×512 仅 0.2 ms，但 1350 万像素（MG/DR）每帧需 ~18 ms，还要再把 <code>gray8</code> 扩成 <code>RGBA8</code>（54 MB）。</p>
+      </td>
+      <td>
+        <p><b>16-bit 64K 查表法（LUT）一步直出 RGBA8</b>：对于所有 <code>samples == 1 &amp;&amp; bytes_per_sample &lt;= 2</code> 的灰阶影像，每次调窗只遍历 <code>0..65535</code> 共 65,536 个可能存储值（耗时 <b>&lt;0.05 ms</b>），严格按 <code>odin-dcm</code> 的位掩码、符号扩展、<code>slope/intercept</code>、DICOM 窗公式与反相预计算一张 <code>lut: [65536]u32</code>（直接打包 <code>0xFF_BB_GG_RR</code>）。随后对整张图像仅做一次紧凑的 <code>dst_u32[p] = lut[src_u16[p]]</code> 查表，512×512 耗时 <b>&lt;0.03 ms</b>，1350 万像素大图也仅需 <b>~3 ms</b>。32-bit/RGB/Palette 仍回退调用 <code>odin-dcm</code> 标准函数。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>2. Skald 纹理更新时的 CPU 全级 Mipmap 重算</b></p>
+      </td>
+      <td>
+        <p><code>vendor/skald/image.odin</code> 的 <code>image_update_pixels</code> 在每次更新时，都会在 CPU 上用 <code>srgb_to_linear</code> 对全部 13 层 Mipmap 做 2×2 盒式滤波并逐级上传。对 1350 万像素（54 MB RGBA8），CPU 算 Mipmap 耗时高达 <b>35–50 ms/帧</b>！</p>
+      </td>
+      <td>
+        <p><b>为视口纹理增加无 Mip 流式模式 + 持久化 Vulkan Staging Buffer + 独立双纹理键（Full / Proxy）</b>：1) 在 <code>vendor/skald/image.odin</code> 中新增 <code>image_load_pixels_opts(r, name, w, h, rgba, mipmapped = false)</code>，当 <code>mipmapped = false</code> 时仅分配 <code>mip_count = 1</code>，跳过全部 CPU Mipmap 重算；2) 在 <code>Renderer.images</code> 中维护一块按需扩容、常驻映射（Persistent Mapped）的 <code>HOST_VISIBLE | HOST_COHERENT</code> Staging Buffer，彻底消除原本每次 <code>image_update_pixels</code> 都执行 <code>vkCreateBuffer + vkAllocateMemory + vkFreeMemory</code> 的驱动系统调用开销；3) 对于超大幅面图像（<code>rows * cols &gt; 2_097_152</code>，即 &gt;2 MP 的 DX/DR/MG），在 <code>Cached_Frame</code> 生成时准备一份长边 <code>&lt;= 1024</code> 的 16-bit 降采样代理缓冲（<code>proxy_raw</code>），并为每个视口分别注册两个固定尺寸纹理键 <code>nautilus://vp/0/proxy</code> 与 <code>nautilus://vp/0/full</code>：<b>鼠标按住拖拽调窗期间</b>实时更新并绘制 <code>proxy</code> 纹理（每帧仅需 <b>0.3 ms</b>，丝滑 120 fps），<b>鼠标松开瞬间</b>立即用完整原图跑一次 LUT 更新并切换绘制 <code>full</code> 纹理。</p>
+      </td>
+    </tr>
+  </table>
+  <h3 id="DLZbR8T-">4.4 对标 OrthoRay DICOM Viewer 的打开与交互速度</h3>
+  <p id="nqkG6t7J">OrthoRay 采用 <b>Rust (<code>dicom-rs</code> 0.8 + Rayon) + Tauri 2.0 (WebView2 / React) + WebGPU</b> 架构。补齐上述三项并行与零拷贝优化后，Nautilus 在各个关键阶段与 OrthoRay 的实测架构对比如下：</p>
+  <table id="ZOM01U5Q">
+    <tr>
+      <th>
+        <p>阶段</p>
+      </th>
+      <th>
+        <p>OrthoRay (Rust + Tauri 2 + WebView2)</p>
+      </th>
+      <th>
+        <p>Nautilus (Odin + odin-dcm + Skald Vulkan)</p>
+      </th>
+      <th>
+        <p>对比结论</p>
+      </th>
+    </tr>
+    <tr>
+      <td>
+        <p><b>1. 冷启动（双击图标到主窗口就绪）</b></p>
+      </td>
+      <td>
+        <p>需拉起 WebView2 (Chromium 子进程) + 解析 JS Bundle + 初始化 WebGPU，约 <b>300–600 ms</b>，基础内存 ~150 MB。</p>
+      </td>
+      <td>
+        <p>纯原生单进程 SDL3 + Vulkan 1.3 + 内嵌字体，无浏览器引擎，约 <b>30–60 ms</b>，基础内存 ~25 MB。</p>
+      </td>
+      <td>
+        <p><b>Nautilus 快 5–10 倍</b></p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>2. 690 文件 / 358 MB CT 目录扫描</b></p>
+      </td>
+      <td>
+        <p><code>dicom-rs</code> 单线程需 200 ms（每元素堆分配）+ Rayon 多核并行 + Tauri IPC 序列化传输。</p>
+      </td>
+      <td>
+        <p><code>odin-dcm</code> 单线程仅 110 ms（mmap + 稳态 0 堆分配，比 <code>dicom-rs</code> 快 1.8×）+ <code>stop_before_tag(7FE0,0010)</code> 早停 + 8 核并行分片扫描，全量建树约 <b>20–30 ms</b>，且<b>首张图像在 5–15 ms 抢先解码上屏</b>。</p>
+      </td>
+      <td>
+        <p><b>Nautilus 更快（首图立即可见，无跨进程 IPC 拷贝）</b></p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>3. 未压缩 / RLE / JPEG-LS 单张与大图打开</b></p>
+      </td>
+      <td>
+        <p>Rust 解码后需跨 Tauri IPC（含 ChaCha20 会话加密/拷贝）传给前端或 WebGPU 纹理。</p>
+      </td>
+      <td>
+        <p>进程内零拷贝直解（RLE 0.3 ms，JPEG-LS 0.5 ms 比 C 库更快；26 MB 乳腺 MG 原生拷贝 + 64K LUT + 无 Mip 持久化 Staging 直传 Vulkan 约 <b>12–18 ms</b>）。</p>
+      </td>
+      <td>
+        <p><b>Nautilus 更快或持平（&lt;20 ms 瞬开）</b></p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>4. JPEG 2000 (J2K) 压缩大图打开</b></p>
+      </td>
+      <td>
+        <p>若链接 C/SIMD 解码器约 30–35 ms/帧；纯 Rust 标量路径较慢。</p>
+      </td>
+      <td>
+        <p><code>odin-dcm</code> 纯 Odin 标量 J2K 解码单帧约 <b>139 ms</b>（零 C 依赖的代价）；序列浏览通过 <b>4 线程并发预取</b>隐藏延迟，首次打开单张 J2K 仍在 <b>~150 ms</b> 内完成。</p>
+      </td>
+      <td>
+        <p><b>单帧首次打开略慢 ~100 ms（仍在人眼瞬时感知 &lt;200 ms 内），翻页预取后 0 ms</b></p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>5. 实时拖拽调窗（WL/WW）</b></p>
+      </td>
+      <td>
+        <p>WebGPU Compute Shader 约 0.5–1 ms。</p>
+      </td>
+      <td>
+        <p>CPU 64K LUT + 持久化 Staging Buffer：512×512 CT 仅 <b>0.3 ms</b>，大图 1024p 代理纹理仅 <b>0.5 ms</b>，全程稳跑 <b>120+ fps</b>。</p>
+      </td>
+      <td>
+        <p><b>同属亚毫秒级（&lt;1 ms），手感完全一致</b></p>
+      </td>
+    </tr>
+  </table>
+  <h2 id="uTwk-kRA">5. 视觉方向、工作台布局与交互设计</h2>
+  <h3 id="DhY06eNL">5.1 视觉方向：放射科暗房精密工作台（Clinical Darkroom）</h3>
+  <p id="l1l_kIyV"><ref artboard="nautilus-ui" to="xfyvBOtbcqwwyVa0eitnB" group="g1" /></p>
+  <p id="ytmkUIyb">医学阅片器的主角永远是影像本身的灰阶层次。界面基于 <code>skald.theme_dark()</code> 定制为低眩光放射科暗房风格：</p>
+  <ul id="C-esGe9G">
+    <li><b>色彩令牌</b>：视口画布背景采用纯黑 <code>#000000</code>（最大化灰阶对比度，不漏光）；工作台外框与工具栏采用深岩灰 <code>#0B0E14</code>，侧边栏面板 <code>#11161F</code>，分割线与边框 <code>#1F2937</code>；主文字 <code>#E5E7EB</code>，次要标签 <code>#9CA3AF</code>；激活视口高亮框与主操作色采用医疗蓝 <code>#388BFD</code>；测量标尺与十字探针采用高辨识度琥珀金 <code>#F59E0B</code>；解码异常/警告采用珊瑚红 <code>#F87171</code>。</li>
+    <li><b>排版、数字对齐与中文字体回退</b>：四角 HUD 叠字使用带 1px 黑色描边/半透明底衬的紧凑字号（12–13 px），坐标、HU 值、窗宽窗位与 Tag 十六进制统一固定宽度显示；针对中文 UI 与 <code>GB18030</code> 中文患者姓名，启动首帧通过 <code>skald.font_load</code> + <code>skald.font_add_fallback</code> 自动挂载系统内置中文字体（Windows 下优先加载 <code>C:/Windows/Fonts/msyh.ttc</code> 或 <code>simhei.ttf</code>），无需在仓库内打包大体积字体文件即可避免中文方块乱码。</li>
+  </ul>
+  <h3 id="o7HFxRJ_">5.2 三栏一顶工作台布局</h3>
+  <p id="u_Aa3l9Y"><ref artboard="nautilus-ui" to="xfyvBOtbcqwwyVa0eitnB" group="g2" /></p>
+  <codeblock id="Okwg9Wks" lang="text">+--------------------------------------------------------------------------------------------------+
+| [打开文件] [打开目录] | 布局:[1x1][1x2][2x2] | 工具:[调窗][平移][缩放][探针][尺子][角度] | 预设:[自动 v] [反相] [旋转] [重置] | [Tag面板] |
++----------------------+----------------------------------------------------+----------------------+
+| 检查与序列 (Studies)  | 视口 1 (Active - #388BFD 边框)                      | [DICOM Tags] [解码诊断]|
+| [搜索序列/模态...]   | -------------------------------------------------- | [搜索 (0028,1050) / 关键字] |
+| v Patient: LI CHUN   | LI CHUN (ID:3955198)          MG / Brust_RCC       | Tag          VR  Value |
+|   v Study 2024-03-15 | 2024-03-15                    Explicit VR LE       | (0008,0060)  CS  CT    |
+|     * [CT] Ser 2 (98)|                                                    | (0010,0010)  PN  张三  |
+|     * [MG] Ser 5 (5) |                  [ DICOM 影像画布 ]                | (0028,0010)  US  512   |
+|                      |                     +--- 142.3 mm ---+             | (0028,0011)  US  512   |
+|                      |                                                    | (0028,0100)  US  16    |
+|                      | Im: 42 / 98 (Loc: -124.5mm)   WL: 40  WW: 400      | (0028,0101)  US  12    |
+|                      | Zoom: 125%  [=== 50mm ===]    (256, 310) = 48 HU   | (0028,1050)  DS  40    |
++----------------------+----------------------------------------------------+----------------------+
+| 状态栏: 已加载 690 个文件 (3 个序列) | 帧缓存: 64 帧 / 32.0 MB | 最近解码: 0.42 ms (JPEG-LS Lossless)       |
++--------------------------------------------------------------------------------------------------+</codeblock>
+  <h3 id="lHdq3WAC">5.3 视口交互映射与快捷键矩阵</h3>
+  <table id="egC37L5h">
+    <tr>
+      <th>
+        <p>输入动作 / 快捷键</p>
+      </th>
+      <th>
+        <p>行为定义</p>
+      </th>
+    </tr>
+    <tr>
+      <td>
+        <p><b>鼠标左键拖拽</b></p>
+      </td>
+      <td>
+        <p>按当前激活工具执行：默认<b>「调窗模式」</b>（水平拖拽改窗宽 WW，垂直拖拽改窗位 WL；按住 <code>Shift</code> 精细微调，对大图自动根据数据动态范围自适应灵敏度）；<b>「平移模式」</b>下拖拽移动图像；<b>「尺子/角度模式」</b>下点击/拖拽放置测量控制点。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>鼠标右键拖拽 / 中键拖拽</b></p>
+      </td>
+      <td>
+        <p>无论当前处于何种工具模式：<b>右键拖拽始终为实时调窗（WL/WW）</b>，<b>中键拖拽（或空格 + 左键）始终为平移（Pan）</b>，符合放射科医生单手盲操习惯。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>鼠标滚轮 / <code>↑</code> <code>↓</code> 键</b></p>
+      </td>
+      <td>
+        <p>在当前激活视口的序列切片（或单文件多帧）间前后翻页；按住 <code>Shift + 滚轮</code>（或 <code>PageUp</code> / <code>PageDown</code>）每次快进/快退 10 张；按住 <code>Ctrl + 滚轮</code> 以鼠标光标为中心无级缩放（Zoom <code>10% .. 3200%</code>）。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>鼠标悬停（Hover）</b></p>
+      </td>
+      <td>
+        <p>实时计算光标落在影像纹理上的像素坐标 <code>(col, row)</code>，从当前帧 <code>raw</code> 缓冲读取原始存储值并计算 Rescale 后的值：若 <code>Modality == &quot;CT&quot;</code> 或存在 HU 单位则显示 <code>X HU (Raw: R)</code>，否则显示 <code>Val: V</code>（RGB 显示 <code>R, G, B</code>）。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>预设快捷键 <code>F1</code> – <code>F7</code></b></p>
+      </td>
+      <td>
+        <p><code>F1</code> 文件默认窗 / 自动极值窗；<code>F2</code> CT 软组织/腹部窗（WL 40 / WW 400）；<code>F3</code> CT 肺窗（WL -600 / WW 1500）；<code>F4</code> CT 骨窗（WL 300 / WW 1500）；<code>F5</code> CT 脑窗（WL 40 / WW 80）；<code>F6</code> CT 纵隔/血管窗（WL 50 / WW 350）；<code>F7</code> 当前帧全动态范围（Min/Max）自适应窗。</p>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p><b>视图与工作台快捷键</b></p>
+      </td>
+      <td>
+        <p><code>I</code> 反相（Invert）；<code>R</code> 顺时针旋转 90°；<code>H</code> / <code>V</code> 水平/垂直翻转；<code>0</code> 或 <code>Home</code> 重置当前视口（适应窗口 + 恢复默认窗）；<code>1</code> / <code>2</code> / <code>4</code> 切换 1×1 / 1×2 / 2×2 布局；<code>Space</code> 多帧播放/暂停；<code>Delete</code> / <code>Backspace</code> 清除当前视口测量标注；<code>T</code> 展开/收起右侧 Tag 诊断面板；<code>Ctrl+O</code> 打开文件；<code>Ctrl+Shift+O</code> 打开目录。</p>
+      </td>
+    </tr>
+  </table>
+  <h3 id="eUqA8QWb">5.4 坐标变换、比例尺与几何测量数学契约</h3>
+  <p id="toCFuIvJ"><ref artboard="nautilus-ui" to="xfyvBOtbcqwwyVa0eitnB" group="g3" /></p>
+  <p id="5QLifbQ_">在 <code>skald.canvas</code> 的绘制回调中，设画布矩形为 <code>bounds: Rect</code>，图像原始宽高为 <code>(iw, ih)</code>：</p>
+  <ul id="ur3-BC5k">
+    <li><b>自适应基准缩放（Fit-to-Viewport）</b>：<code>base_scale = min(bounds.w / iw, bounds.h / ih)</code>（当旋转角度为 90° 或 270° 时宽高互换计算）。实际屏幕像素缩放率 <code>scale = base_scale * vp.zoom</code>。</li>
+    <li><b>图像像素坐标 <code>(px, py)</code> ⇄ 屏幕画布坐标 <code>(sx, sy)</code></b>：以视口中心 <code>center = bounds.xy + bounds.wh * 0.5 + vp.pan</code> 为原点，先对 <code>(px - iw*0.5, py - ih*0.5)</code> 应用水平/垂直翻转（<code>flip_h</code> / <code>flip_v</code>）与 90° 整数倍旋转矩阵，再乘以 <code>scale</code> 加上 <code>center</code>。逆变换严格对称，确保无论图像如何缩放、平移、旋转、翻转，<b>鼠标探针取到的像素坐标和放置的测量端点始终钉死在解剖结构像素上</b>。</li>
+    <li><b>物理长度校准</b>：优先读取 <code>PixelSpacing (0028,0030)</code>（<code>[row_spacing_mm, col_spacing_mm]</code>），次选 <code>ImagerPixelSpacing (0018,1164)</code>。两点间物理距离 <math>d_{\text{mm}} = \sqrt{(\Delta x \cdot s_{\text{col}})^2 + (\Delta y \cdot s_{\text{row}})^2}</math>；若两项 Tag 均缺失，则显示像素距离 <code>XX.X px (未校准)</code>。</li>
+  </ul>
+  <h3 id="fvs-WJ1P">5.5 <code>odin-dcm</code> 疑难片源诊断面板</h3>
+  <p id="TmgUlby7"><ref artboard="nautilus-ui" to="xfyvBOtbcqwwyVa0eitnB" group="g4" /></p>
+  <p id="5ofaHoIH">右侧面板专为验证 <code>odin-dcm</code> 在真实临床数据上的表现而设计，包含两个子标签页：</p>
+  <ol id="TC0IMAL2">
+    <li><b>DICOM Tags 标签页</b>：当激活视口切换到一个新文件时，后台线程遍历其 <code>dicom.Document</code> 树（含嵌套 Sequence 与 Item），结合 <code>src/tag_keywords.odin</code>（由 <code>../odin-dcm/tools/gen_dict.py</code> 同源的 <code>pydicom.datadict</code> 生成标准 PS3.6 Tag → Keyword 映射表，不改动 <code>vendor/dicom</code> 原有校验和）与 <code>dicom.text_to_utf8</code>（自动处理 <code>ISO_IR 192</code> UTF-8 与 <code>GB18030</code> / <code>GBK</code> 中文患者姓名），生成扁平化的可视行数组 <code>[]Tag_Row</code>。界面通过 <code>skald.virtual_list</code> 虚拟滚动渲染，支持数万个元素零卡顿滚动，并支持顶部搜索框按 Tag 号（如 <code>0028,1050</code> 或 <code>00281050</code>）、标准关键字（如 <code>WindowCenter</code>、<code>Photometric</code>）或值内容实时过滤。</li>
+    <li><b>解码与结构诊断标签页</b>：集中展示当前文件的底层技术指标——文件路径与字节大小、有无 128B Preamble + <code>DICM</code>、Transfer Syntax UID 及可读名称、<code>Pixel_Info</code> 全字段（<code>Rows</code>、<code>Cols</code>、<code>Frames</code>、<code>Samples</code>、<code>BitsAllocated</code>、<code>BitsStored</code>、<code>Signed</code>、<code>Photometric</code>、<code>Native/Encapsulated</code>、<code>Subsampled_422</code>）、封装 PixelData 的每个 Fragment 序号/偏移量/长度表，以及本次打开的<b>解析耗时（μs/ms）、帧解码耗时（ms）、LUT 渲染耗时（ms）</b>。对于仅含结构或非标准像素的数据集（如 <code>../corpus_ext/parametric_map_float.dcm</code> 使用 <code>(7FE0,0008)</code> Float Pixel Data、无像素 SR 文档或不支持的 HTJ2K 语法），视口中央平稳显示诊断提示卡片（说明缺失属性或 <code>Pixel_Error</code> / <code>dicom.document_error</code> 详情），同时右侧面板完整展示已解析出的 Tag 树与错误上下文，绝不崩溃或假死。</li>
+  </ol>
+  <h2 id="5i871Evz">6. 工程目录与核心数据结构</h2>
+  <codeblock id="ADLJGSF0" lang="text">Nautilus/
+  SDL3.dll                  # 从 ../exam/counter/SDL3.dll 拷贝，运行期零配置
+  build.bat                 # Windows 一键编译脚本 (odin build src -out:nautilus.exe -collection:vendor=vendor)
+  build.sh                  # Linux/macOS 编译脚本
+  vendor/
+    dicom/                  # 完整拷贝自 ../odin-dcm/dicom（含 stop_before_pixel_data 扩展）
+    skald/                  # 完整拷贝自 ../exam/counter/vendor/skald（含无 mip 流式纹理扩展）
+  src/
+    main.odin               # 入口、命令行参数（支持直接传入文件/目录路径启动）、skald.run
+    state.odin              # App_State, Msg 联合类型, 视口/序列/测量/诊断核心数据结构
+    update.odin             # Elm update 状态机、快捷键分发、视口工具交互与预取调度
+    study_loader.odin       # 后台目录递归扫描、DICOM 轻量头提取、Patient/Study/Series 排序建树
+    frame_cache.odin        # 双上限 LRU 原始帧缓存、后台 pixel_decode_frame 与 tag/诊断快照提取
+    display_pipeline.odin   # 16-bit 64K LUT 快速窗化、大图 1024p 代理缓冲、RGB/YBR422/Palette 转换与纹理上传
+    ui_toolbar.odin         # 顶部工具栏、布局切换、窗位预设下拉与底部状态栏
+    ui_sidebar.odin         # 左侧 Patient -&gt; Study -&gt; Series 树与快速过滤
+    ui_viewport.odin        # 中央 1x1/1x2/2x2 视口网格、skald.canvas 渲染、四角 HUD 叠字与测量绘制
+    ui_inspector.odin       # 右侧 DICOM Tag 虚拟列表搜索与 odin-dcm 解码诊断面板
+    tag_keywords.odin       # 标准 DICOM PS3.6 Tag -&gt; Keyword 静态查找表（供 Tag 面板展示与按名搜索）
+    pipeline_test.odin      # 针对 LUT 精度（与 dicom.render_gray8 逐字节对齐）、坐标正逆变换、LRU 淘汰与目录建树的单测</codeblock>
+  <details id="65xWgeli" summary="核心状态与消息类型签名（src/state.odin 预览）" open="false">
+    <codeblock lang="odin">package nautilus
+
+import &quot;vendor:dicom&quot;
+import &quot;vendor:skald&quot;
+
+Layout_Mode :: enum u8 { Single_1x1, Split_1x2, Grid_2x2 }
+Tool_Mode   :: enum u8 { Window_Level, Pan, Zoom, Probe, Measure_Length, Measure_Angle }
+
+Instance_Entry :: struct {
+    file_path:        string,
+    instance_number:  int,
+    has_instance_num: bool,
+    slice_location:   f64,
+    has_slice_loc:    bool,
+    rows, cols:       int,
+    frames:           int,
+}
+
+Series_Entry :: struct {
+    series_uid:   string,
+    series_num:   int,
+    description:  string,
+    modality:     string,
+    instances:    [dynamic]Instance_Entry,
+}
+
+Study_Entry :: struct {
+    study_uid:    string,
+    patient_name: string,
+    patient_id:   string,
+    study_date:   string,
+    description:  string,
+    series:       [dynamic]Series_Entry,
+}
+
+Viewport_State :: struct {
+    study_idx, series_idx: int,
+    instance_idx:          int,
+    frame_idx:             int,
+    request_seq:           u64,
+    // 显示变换与窗位状态
+    center, width:         f64,
+    window_initialized:    bool,
+    invert:                bool,
+    zoom:                  f32, // 1.0 = fit to viewport
+    pan:                   [2]f32,
+    rotation_quadrants:    int, // 0, 1, 2, 3 (×90°)
+    flip_h, flip_v:        bool,
+    // 纹理上传同步版本号
+    uploaded_key:          Frame_Key,
+    uploaded_wl_gen:       u64,
+    uploaded_proxy:        bool,
+    // 测量标注
+    rulers:                [dynamic]Ruler_Annotation,
+    angles:                [dynamic]Angle_Annotation,
+}</codeblock>
+  </details>
+  <h2 id="VBz5wYJi">7. 实施里程碑与验证计划</h2>
+  <steps id="KBIFwb8R">
+    <step id="s_vjih0rnl" title="M0：独立工程脚手架与 vendor 集成">
+      <p>拷贝 <code>vendor/dicom</code>、<code>vendor/skald</code> 与 <code>SDL3.dll</code>；在 <code>vendor/dicom/parser.odin</code> 增加可选的 <code>stop_before_pixel_data</code> 并在 <code>vendor/skald/image.odin</code> 增加 <code>mipmapped = false</code> 流式纹理入口；跑通 <code>odin test vendor/dicom</code> 确保解析内核 71 个单测全绿，启动空白 Nautilus 暗房主窗口。</p>
+    </step>
+    <step id="s_3xp2yh3m" title="M1：高速显示管线（16-bit 64K LUT + 大图代理纹理）与单文件秒开">
+      <p>实现 <code>display_pipeline.odin</code> 与 <code>frame_cache.odin</code>；编写单测验证 16-bit LUT 输出与 <code>dicom.render_gray8</code> 在 Signed/Unsigned、Rescale、MONOCHROME1 下逐字节一致；支持命令行传参、文件对话框或拖入单张 <code>corpus_clin</code> 中的 26 MB 乳腺 MG / CT / <code>corpus_ext</code> 疑难样本秒开显示，验证鼠标拖拽调窗、缩放、平移、旋转翻转与实时 HU/像素探针。</p>
+    </step>
+    <step id="s_lnnrhrwg" title="M2：检查目录秒扫、Study/Series 树与零卡顿滚轮翻页">
+      <p>实现 <code>study_loader.odin</code> 抢先首帧 + 后台建树与排序；接入左侧 Study/Series 导航栏、<code>1×1</code> / <code>1×2</code> / <code>2×2</code> 多视口网格、多帧 Cine 播放及滑动窗口预取；使用 <code>corpus_clin</code> 真实检查目录验证首帧上屏时间、目录树聚合及滚轮连续翻页流畅度。</p>
+    </step>
+    <step id="s_etfpbfi4" title="M3：临床测量工具（长度/角度）与右侧 Tag / 解码诊断面板">
+      <p>在 <code>ui_viewport.odin</code> 实现四角完整临床 HUD、物理比例尺、两点长度尺子（mm/px）与三点角度测量；实现右侧可折叠 <code>ui_inspector.odin</code>（虚拟列表 Tag 搜索过滤 + GB18030 中文解码 + 封装码流 Fragment 与错误诊断面板），并用 <code>corpus_ext</code> 全部边缘样本（J2K、JPEG-LS、RLE、Palette、YBR_FULL_422、Parametric Float）逐一回归验证。</p>
+    </step>
+  </steps>
+  <h2 id="oYDiI8f0">8. 我的默认决策（供你核对）</h2>
+  <p id="JGjp3Kj-">以下细项是我为保证工程闭环和流畅体验做出的默认选择，如有不同偏好请直接批注修改：</p>
+  <ul id="pfIGFmzc">
+    <li><b>支持命令行直接传路径</b>：除了窗口内点击「打开」或拖放文件/目录外，支持 <code>nautilus.exe &lt;file_or_dir&gt;</code> 直接打开指定文件或目录，方便日常从命令行或文件管理器右键关联启动。（我的默认）</li>
+    <li><b>鼠标左右键双兼容调窗</b>：默认工具为「调窗」时左键拖拽即调窗；同时无论切换到平移、缩放还是测量工具，<b>右键拖拽始终保持为调窗、中键拖拽始终保持为平移</b>，无需频繁切工具栏。（我的默认）</li>
+    <li><b>大图拖拽动态降采样阈值</b>：当单帧像素数 <code>&gt; 2,097,152</code>（例如 2048×2048 以上的 DX/DR/MG）时，鼠标按住连续拖拽调窗期间使用 1024p 16-bit 代理缓冲实时刷新，松开鼠标左/右键的同一帧立即切换回 100% 原始分辨率纹理；普通 512×512 CT/MR 全程直接刷新原图。（我的默认）</li>
+    <li><b>帧缓存容量上限</b>：<code>Frame_Cache</code> 默认上限设为 <b>256 帧或 512 MB</b>（先到为准），足以在内存里完整装下一整套 256 层 CT 序列而不会在查看多张 26 MB MG 大图时占用过多内存。（我的默认）</li>
+    <li><b>物理尺寸未校准时的诚实标注</b>：当 DICOM 文件既无 <code>PixelSpacing (0028,0030)</code> 也无 <code>ImagerPixelSpacing (0018,1164)</code> 时，长度测量工具输出 <code>XX.X px</code> 而非伪造毫米数；当仅存在 <code>ImagerPixelSpacing</code>（如部分 CR/DX/MG 探测器面间距）时，标注 <code>XX.X mm (Imager)</code>。（我的默认）</li>
+    <li><b>系统级中文字体回退与 Tag 关键字表</b>：启动时通过 <code>skald.font_add_fallback</code> 自动链接本机系统字体（如 Windows <code>msyh.ttc</code> / <code>simhei.ttf</code>）渲染中文 UI 与 GB18030 患者姓名；Tag 面板的标准英文 Keyword 放在 <code>src/tag_keywords.odin</code> 静态表中，保持 <code>vendor/dicom</code> 字典校验单测原样通过。（我的默认）</li>
+    <li><b>本地验收语料与基准环境</b>：所有里程碑与性能红线直接基于本机 <code>D:/Odin/corpus_clin</code>（<code>../corpus_clin</code>，2915 个临床文件，含 690 文件 CT 与 26 MB 乳腺 MG）和 <code>D:/Odin/corpus_ext</code>（<code>../corpus_ext</code>，162 个边缘/压缩样本）实测验收。（我的默认）</li>
+  </ul>
+  <h2 id="6GGDVv-y">9. 设计产物记录</h2>
+  <ul id="-ygRHqBT">
+    <li><b>文档产物</b>：<code>document/nautilus-viewer</code>（路径：<code>.ryugi/artifacts/document/nautilus-viewer/doc.xml</code>，本地预览链接：<a href="http://localhost:27319/document/SyD6jSExt6gzJbBFl2903">http://localhost:27319/document/SyD6jSExt6gzJbBFl2903</a>）。</li>
+    <li><b>本轮已收敛决议</b>：第 1 轮共 6 项问题（首版定位 <code>series-workstation</code>、核心性能红线、CPU 原始帧缓存 + LUT 调窗 <code>cpu-raw-cache</code>、元数据先行 + LRU 缓存 <code>meta-first-lru</code>、1×1/1×2/2×2 视口与工具集 <code>single-plus-2x2</code>、<code>vendor/</code> 独立拷贝依赖 <code>vendor-copy</code>）均已记录至第 2 节并在第 3–7 节给出完整实现规范。</li>
+    <li><b>已固化</b>：本规范已保存为 <code>docs/ryugi/specs/2026-11-13-nautilus-viewer-design.md</code>（2026-11-13 批准，暂不启动实现）。</li>
+    <li>10. v0.2 外部评审修订（8 项，全部核实成立）</li>
+    <li>
+      <ul>
+        <li>语料基准矛盾 → 钉死绝对路径（§4.1 段首）：红线目标 = <code>D:/Odin/odin-dcm/Dcm</code>（实测 693 文件），corpus_clin（2915）只做回归。</li>
+        <li>首帧 &lt;200 ms 无测量定义 → 红线 0–6 全部配计时起点（t₀(launch)/t₀(drop)/t_screen），并给出首帧预算账与 J2K 分档（实测 84.6 ms）。</li>
+        <li>「跳过 Fragment 遍历」机理错误 → 改为 depth-0 tag 比较提前返回、PixelData 不注册、parse_fragments 不进入（parser.odin:140-146 实证）。</li>
+        <li>松手瞬间无预算 → 新增红线 5（≤33 ms/2 帧）+ 预算账 + 拆半上传降级。</li>
+        <li>cmd_thread 无池与 4 路并发矛盾 → 新增 §4.2.1 自建持久 Decode_Pool + decode_pool_test 并发测试清单。</li>
+        <li>置信度夸大 → 声明 Builder Check 仅为文档级 API 名核对，无编译验证，M0 未启动。</li>
+        <li>无 Plan B → 规范新增 §8 风险与降级路径表（R-0..R-5）。</li>
+        <li>细项 → 无 Preamble 验证钉到 corpus_ext 9 个文件；gen_dict.py 改绝对路径 <code>D:/Odin/odin-dcm/tools/gen_dict.py</code>；测试清单补并发覆盖。</li>
+      </ul>
+    </li>
+    <li>完整 v0.2 规范以 <code>docs/ryugi/specs/2026-11-13-nautilus-viewer-design.md</code> 为准（本页为同步摘要）；仍暂不实现。</li>
+  </ul>
+</doc>
+

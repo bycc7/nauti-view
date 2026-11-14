@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>B · 极简底栏 HUD（四角零文字）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #080a0f; color: #e5e7eb;
+    font-family: "Inter", "Microsoft YaHei", sans-serif;
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .mono { font-family: "JetBrains Mono", "Consolas", monospace; font-variant-numeric: tabular-nums; }
+  .grid-2x2 {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    gap: 2px; width: 1280px; height: 800px; background: #1e2636; padding: 2px;
+  }
+  .vp { position: relative; background: #000000; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid #141923; }
+  .vp.active { border: 1.5px solid #388bfd; }
+  .vp img { width: 92%; height: 92%; object-fit: contain; }
+  .bottom-strip {
+    position: absolute; left: 10px; right: 10px; bottom: 8px; height: 26px;
+    background: rgba(11,14,20,0.82); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between;
+    font-size: 11.5px; color: #d1d5db;
+  }
+</style>
+</head>
+<body>
+<div class="grid-2x2">
+  <section class="vp active">
+    <img src="ct_soft.png" alt="VP1">
+    <div class="bottom-strip mono">
+      <span><b style="color:#79b8ff;">#1</b> Im 36/172 · 118%</span>
+      <span>WL 40 / WW 400</span>
+      <span style="color:#fbbf24;">XY(284,261) = 312</span>
+    </div>
+  </section>
+  <section class="vp">
+    <img src="ct_lung.png" alt="VP2">
+    <div class="bottom-strip mono">
+      <span><b>#2</b> Im 36/172 · 118%</span>
+      <span>WL -600 / WW 1500</span>
+      <span style="color:#8b949e;">0.02 ms</span>
+    </div>
+  </section>
+  <section class="vp">
+    <img src="ct_soft.png" alt="VP3" style="filter:invert(1);">
+    <div class="bottom-strip mono">
+      <span><b>#3</b> Im 36/172 · INV</span>
+      <span>WL 40 / WW 400</span>
+      <span style="color:#8b949e;">MONOCHROME1</span>
+    </div>
+  </section>
+  <section class="vp">
+    <img src="ct_soft.png" alt="VP4" style="transform:scaleX(-1);">
+    <div class="bottom-strip mono">
+      <span><b>#4</b> MG · Im 1/5</span>
+      <span>WL 2048 / WW 4096</span>
+      <span style="color:#4cc38a;">3328×4096</span>
+    </div>
+  </section>
+</div>
+</body>
+</html>

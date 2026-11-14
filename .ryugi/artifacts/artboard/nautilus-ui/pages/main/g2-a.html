@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A · 紧凑层级树 + 模态胶囊 + 实时切片进度条</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #080a0f; color: #e5e7eb;
+    font-family: "Inter", "Microsoft YaHei", sans-serif;
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .mono { font-family: "JetBrains Mono", "Consolas", monospace; font-variant-numeric: tabular-nums; }
+  .layout { display: grid; grid-template-columns: 272px 1fr; width: 1280px; height: 800px; }
+  .sidebar { background: #0e121a; border-right: 2px solid #388bfd; display: flex; flex-direction: column; }
+  .hdr {
+    height: 40px; padding: 0 12px; background: #0b0e14; border-bottom: 1px solid #1e2636;
+    display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: 12px;
+  }
+  .sub-note {
+    margin: 8px; padding: 8px 10px; border-radius: 6px; background: rgba(76,195,138,0.1);
+    border: 1px solid rgba(76,195,138,0.35); color: #4cc38a; font-size: 11px; line-height: 1.4;
+  }
+  .list { flex: 1; padding: 0 8px; display: flex; flex-direction: column; gap: 3px; }
+  .pat { padding: 6px 8px; background: #141923; border-radius: 5px; font-weight: 600; font-size: 12px; display: flex; justify-content: space-between; margin-top: 4px; }
+  .stu { padding: 4px 8px 4px 14px; color: #9ca3af; font-size: 11px; display: flex; justify-content: space-between; }
+  .ser {
+    padding: 6px 8px 6px 18px; border-radius: 6px; border: 1px solid transparent;
+    display: flex; flex-direction: column; gap: 4px; background: rgba(255,255,255,0.015);
+  }
+  .ser.active { background: rgba(56,139,253,0.14); border-color: #388bfd; }
+  .row1 { display: flex; align-items: center; gap: 6px; }
+  .badge { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: rgba(56,139,253,0.2); color: #79b8ff; }
+  .badge.mg { background: rgba(245,158,11,0.2); color: #fbbf24; }
+  .badge.ct { background: rgba(76,195,138,0.2); color: #4cc38a; }
+  .row2 { display: flex; justify-content: space-between; font-size: 11px; color: #8b949e; }
+  .prog { height: 3px; background: #1f2937; border-radius: 2px; overflow: hidden; }
+  .prog > div { height: 100%; background: #388bfd; }
+
+  .rest { background: #000; display: flex; align-items: center; justify-content: center; position: relative; }
+  .rest img { width: 680px; height: 680px; object-fit: contain; }
+  .callout {
+    position: absolute; top: 24px; left: 24px; padding: 12px 16px; border-radius: 8px;
+    background: rgba(14,18,26,0.92); border: 1px solid #388bfd; max-width: 440px;
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="hdr">
+      <span>方案 A：紧凑层级树 (skald.virtual_list)</span>
+      <span class="mono" style="color:#4cc38a;">0 ms 缩略图开销</span>
+    </div>
+    <div class="sub-note mono">
+      ✓ 无需为每个序列解码预览图，扫完目录立即可点<br>
+      ✓ 同屏可展示 12–16 个序列，带实时切片进度条
+    </div>
+    <div class="list">
+      <div class="pat"><span>▾ LUO^ShanHeng</span><span class="mono" style="color:#8b949e;">0000000499</span></div>
+      <div class="stu"><span>▾ Study #1 · 2026-05-19</span><span class="mono">690 slices</span></div>
+
+      <div class="ser active">
+        <div class="row1"><span class="badge">MR</span><span style="flex:1;font-weight:600;">WATER: BH Ax LAVA-Flex</span><span class="mono" style="color:#79b8ff;">36/172</span></div>
+        <div class="row2 mono"><span>512×512 · 16-bit</span><span>Ser #4 · Loc -64.2mm</span></div>
+        <div class="prog"><div style="width:21%;"></div></div>
+      </div>
+
+      <div class="ser">
+        <div class="row1"><span class="badge">MR</span><span style="flex:1;">FAT: BH Ax LAVA-Flex</span><span class="mono">172</span></div>
+        <div class="row2 mono"><span>512×512 · 16-bit</span><span>Ser #5</span></div>
+      </div>
+
+      <div class="ser">
+        <div class="row1"><span class="badge">MR</span><span style="flex:1;">InPhase: BH Ax LAVA-Flex</span><span class="mono">173</span></div>
+        <div class="row2 mono"><span>512×512 · 16-bit</span><span>Ser #6</span></div>
+      </div>
+
+      <div class="ser">
+        <div class="row1"><span class="badge">MR</span><span style="flex:1;">OutPhase: BH Ax LAVA-Flex</span><span class="mono">173</span></div>
+        <div class="row2 mono"><span>512×512 · 16-bit</span><span>Ser #7</span></div>
+      </div>
+
+      <div class="pat" style="margin-top:8px;"><span>▾ LI CHUN (李春)</span><span class="mono" style="color:#8b949e;">3955198</span></div>
+      <div class="stu"><span>▾ Mammography Screening</span><span class="mono">5 slices</span></div>
+
+      <div class="ser">
+        <div class="row1"><span class="badge mg">MG</span><span style="flex:1;">RCC Breast (26.0 MB)</span><span class="mono">1/5</span></div>
+        <div class="row2 mono"><span>3328×4096 · 12-bit</span><span>Proxy 1024p Ready</span></div>
+      </div>
+
+      <div class="pat" style="margin-top:8px;"><span>▾ CORPUS_EXT (边缘回归集)</span><span class="mono" style="color:#8b949e;">163 files</span></div>
+      <div class="ser">
+        <div class="row1"><span class="badge ct">J2K</span><span style="flex:1;">693_J2KR.dcm</span><span class="mono">1</span></div>
+        <div class="row2 mono"><span>JPEG 2000 Lossless (.90)</span><span>84.6 ms</span></div>
+      </div>
+      <div class="ser">
+        <div class="row1"><span class="badge ct">JLS</span><span style="flex:1;">emri_small_jpeg_ls.dcm</span><span class="mono">10</span></div>
+        <div class="row2 mono"><span>JPEG-LS Lossless (.80)</span><span>0.5 ms</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="rest">
+    <img src="ct_soft.png" alt="Viewport">
+    <div class="callout">
+      <div style="font-weight:600;color:#79b8ff;margin-bottom:4px;">左侧序列栏方案 A：紧凑层级树</div>
+      <div style="font-size:12px;color:#d1d5db;line-height:1.5;">
+        当拖入 <code>corpus_clin</code>（2915 个文件）或包含十几个序列的多模态目录时，紧凑树完全不需要解码每个序列的缩略图纹理，列表在 20–30 ms 内即可生成并支持虚拟滚动。
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A · 放射科暗房三栏工作台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #080a0f; color: #e5e7eb;
+    font-family: "Inter", "Microsoft YaHei", -apple-system, sans-serif;
+    font-size: 13px; line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+  }
+  .mono { font-family: "JetBrains Mono", "Consolas", monospace; font-variant-numeric: tabular-nums; }
+  .app { display: flex; flex-direction: column; width: 1280px; height: 800px; }
+
+  /* Top Instrument Bar (40px) */
+  .topbar {
+    height: 40px; background: #0b0e14; border-bottom: 1px solid #1e2636;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 12px; gap: 8px;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; color: #f3f4f6; letter-spacing: 0.02em; padding-right: 8px; border-right: 1px solid #1e2636; }
+  .brand-dot { width: 8px; height: 8px; border-radius: 2px; background: #388bfd; box-shadow: 0 0 8px rgba(56,139,253,0.6); }
+  .btn-group { display: flex; align-items: center; gap: 4px; padding-right: 8px; border-right: 1px solid #1e2636; }
+  .btn {
+    height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid #1f2937;
+    background: #131822; color: #d1d5db; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 500;
+  }
+  .btn.active { background: rgba(56,139,253,0.16); border-color: #388bfd; color: #79b8ff; }
+  .btn .kbd { font-size: 10px; color: #6b7280; background: #0b0e14; padding: 1px 4px; border-radius: 3px; border: 1px solid #1f2937; }
+
+  /* Main 3-Pane Body (732px) */
+  .main { flex: 1; display: grid; grid-template-columns: 248px 1fr 340px; height: 732px; overflow: hidden; }
+
+  /* Left Study/Series Sidebar */
+  .sidebar { background: #0e121a; border-right: 1px solid #1e2636; display: flex; flex-direction: column; }
+  .pane-hdr {
+    height: 32px; padding: 0 12px; border-bottom: 1px solid #1e2636;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #9ca3af;
+  }
+  .search-box {
+    margin: 8px; height: 28px; background: #080a0f; border: 1px solid #1f2937; border-radius: 6px;
+    padding: 0 8px; display: flex; align-items: center; gap: 6px; color: #6b7280; font-size: 12px;
+  }
+  .tree { flex: 1; padding: 0 6px; overflow: hidden; display: flex; flex-direction: column; gap: 2px; }
+  .tree-patient {
+    padding: 6px 8px; border-radius: 6px; background: #141923; color: #f3f4f6; font-weight: 600; font-size: 12px;
+    display: flex; align-items: center; justify-content: space-between; margin-top: 4px;
+  }
+  .tree-study { padding: 4px 8px 4px 16px; color: #9ca3af; font-size: 11px; display: flex; justify-content: space-between; }
+  .tree-series {
+    padding: 6px 8px 6px 20px; border-radius: 6px; display: flex; flex-direction: column; gap: 4px;
+    border: 1px solid transparent;
+  }
+  .tree-series.active { background: rgba(56,139,253,0.12); border-color: rgba(56,139,253,0.45); }
+  .ser-row1 { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .mod-badge {
+    font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+    background: rgba(56,139,253,0.2); color: #79b8ff; border: 1px solid rgba(56,139,253,0.35);
+  }
+  .mod-badge.mg { background: rgba(245,158,11,0.18); color: #fbbf24; border-color: rgba(245,158,11,0.35); }
+  .ser-title { flex: 1; font-size: 12px; color: #e5e7eb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+  .ser-count { font-size: 11px; color: #9ca3af; }
+  .ser-meta { display: flex; justify-content: space-between; font-size: 11px; color: #6b7280; }
+  .ser-bar { height: 3px; background: #1f2937; border-radius: 2px; overflow: hidden; }
+  .ser-bar-fill { height: 100%; background: #388bfd; width: 35%; }
+
+  /* Center Viewport Grid (1x2 Split) */
+  .viewports {
+    background: #000000; display: grid; grid-template-columns: 1fr 1fr; gap: 2px;
+    padding: 2px; position: relative;
+  }
+  .vp {
+    background: #000000; position: relative; overflow: hidden;
+    border: 1px solid #1e2636; display: flex; align-items: center; justify-content: center;
+  }
+  .vp.active { border: 1.5px solid #388bfd; box-shadow: inset 0 0 0 1px rgba(56,139,253,0.25); }
+  .vp img { width: 92%; height: 92%; object-fit: contain; filter: contrast(1.06); }
+
+  /* 4-Corner Clinical HUD Overlay */
+  .hud {
+    position: absolute; font-size: 11.5px; line-height: 1.45; color: #d1d5db;
+    text-shadow: 0 1px 2px #000, 0 0 4px #000; pointer-events: none;
+  }
+  .hud-tl { top: 10px; left: 12px; }
+  .hud-tr { top: 10px; right: 12px; text-align: right; }
+  .hud-bl { bottom: 10px; left: 12px; }
+  .hud-br { bottom: 10px; right: 12px; text-align: right; }
+  .hud-strong { color: #ffffff; font-weight: 600; }
+  .hud-muted { color: #9ca3af; }
+  .hud-accent { color: #79b8ff; font-weight: 600; }
+  .hud-probe {
+    display: inline-block; margin-top: 2px; padding: 2px 6px; border-radius: 4px;
+    background: rgba(11,14,20,0.82); border: 1px solid rgba(245,158,11,0.45); color: #fbbf24;
+  }
+
+  /* Scale bar & Measurement Overlay */
+  .scale-bar {
+    position: absolute; left: 12px; bottom: 72px; width: 68px; height: 8px;
+    border-left: 1.5px solid #9ca3af; border-right: 1.5px solid #9ca3af; border-bottom: 1.5px solid #9ca3af;
+    font-size: 10px; color: #9ca3af; text-align: center; line-height: 1;
+  }
+  .ruler-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+  /* Right Inspector Panel */
+  .inspector { background: #0e121a; border-left: 1px solid #1e2636; display: flex; flex-direction: column; }
+  .tabs { display: flex; height: 32px; border-bottom: 1px solid #1e2636; background: #0b0e14; }
+  .tab {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 12px; font-weight: 500; color: #9ca3af; border-bottom: 2px solid transparent;
+  }
+  .tab.active { color: #f3f4f6; border-bottom-color: #388bfd; background: #0e121a; }
+  .diag-summary {
+    margin: 8px; padding: 8px 10px; border-radius: 6px; background: #131822; border: 1px solid #1f2937;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 11px;
+  }
+  .diag-item span { color: #8b949e; display: block; font-size: 10px; }
+  .diag-item b { color: #e5e7eb; font-weight: 600; }
+  .tag-table { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+  .tag-hdr, .tag-row {
+    display: grid; grid-template-columns: 82px 32px 108px 1fr; align-items: center;
+    padding: 0 10px; height: 26px; font-size: 11.5px; border-bottom: 1px solid rgba(31,41,55,0.5);
+  }
+  .tag-hdr { height: 24px; background: #11161f; color: #8b949e; font-size: 10.5px; font-weight: 600; text-transform: uppercase; }
+  .tag-row:nth-child(even) { background: rgba(17,22,31,0.45); }
+  .tag-row.hl { background: rgba(56,139,253,0.14); }
+  .tag-id { color: #79b8ff; }
+  .tag-vr { color: #fbbf24; font-weight: 600; font-size: 10.5px; }
+  .tag-kw { color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 6px; }
+  .tag-val { color: #e5e7eb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Bottom Status & Engine Telemetry Bar (28px) */
+  .statusbar {
+    height: 28px; background: #0b0e14; border-top: 1px solid #1e2636;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
+    font-size: 11px; color: #9ca3af;
+  }
+  .status-left, .status-right { display: flex; align-items: center; gap: 14px; }
+  .pill-ok { color: #4cc38a; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+  .pill-ok::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #4cc38a; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Top Toolbar -->
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div class="brand"><span class="brand-dot"></span>NAUTILUS</div>
+      <div class="btn-group">
+        <div class="btn"><ryugi-icon name="file-plus" size="14"></ryugi-icon>打开文件 <span class="kbd">^O</span></div>
+        <div class="btn"><ryugi-icon name="folder-open" size="14"></ryugi-icon>打开目录 <span class="kbd">^⇧O</span></div>
+      </div>
+      <div class="btn-group">
+        <div class="btn">1×1 <span class="kbd">1</span></div>
+        <div class="btn active">1×2 <span class="kbd">2</span></div>
+        <div class="btn">2×2 <span class="kbd">4</span></div>
+      </div>
+      <div class="btn-group">
+        <div class="btn active"><ryugi-icon name="sun-medium" size="14"></ryugi-icon>调窗</div>
+        <div class="btn"><ryugi-icon name="move" size="14"></ryugi-icon>平移</div>
+        <div class="btn"><ryugi-icon name="zoom-in" size="14"></ryugi-icon>缩放</div>
+        <div class="btn"><ryugi-icon name="crosshair" size="14"></ryugi-icon>探针</div>
+        <div class="btn"><ryugi-icon name="ruler" size="14"></ryugi-icon>尺子</div>
+        <div class="btn"><ryugi-icon name="triangle-right" size="14"></ryugi-icon>角度</div>
+      </div>
+      <div class="btn-group" style="border-right:none;">
+        <div class="btn">预设: 软组织 (40/400) <span class="kbd">F2</span></div>
+        <div class="btn"><ryugi-icon name="contrast" size="14"></ryugi-icon>反相 <span class="kbd">I</span></div>
+        <div class="btn"><ryugi-icon name="rotate-cw" size="14"></ryugi-icon>90° <span class="kbd">R</span></div>
+        <div class="btn">重置 <span class="kbd">0</span></div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <div class="btn active"><ryugi-icon name="panel-right" size="14"></ryugi-icon>诊断面板 <span class="kbd">T</span></div>
+    </div>
+  </header>
+
+  <!-- 3-Pane Workstation -->
+  <div class="main">
+    <!-- Left Sidebar: Study / Series Tree -->
+    <aside class="sidebar">
+      <div class="pane-hdr">
+        <span>检查与序列 (Studies)</span>
+        <span class="mono" style="color:#79b8ff;">2 Studies</span>
+      </div>
+      <div class="search-box">
+        <ryugi-icon name="search" size="13"></ryugi-icon>
+        <span>过滤患者 / 序列 / 模态...</span>
+      </div>
+      <div class="tree">
+        <div class="tree-patient">
+          <span>▾ LUO^ShanHeng</span>
+          <span class="mono" style="font-size:11px;color:#8b949e;">ID:0000000499</span>
+        </div>
+        <div class="tree-study">
+          <span>▾ 2026-05-19 · Liver LAVA-Flex</span>
+          <span class="mono">690 im</span>
+        </div>
+        <div class="tree-series active">
+          <div class="ser-row1">
+            <span class="mod-badge">MR</span>
+            <span class="ser-title">WATER: BH Ax LAVA-Flex</span>
+            <span class="ser-count mono">36/172</span>
+          </div>
+          <div class="ser-meta mono">
+            <span>512×512 · 16-bit</span>
+            <span>Explicit VR LE</span>
+          </div>
+          <div class="ser-bar"><div class="ser-bar-fill" style="width:21%;"></div></div>
+        </div>
+        <div class="tree-series">
+          <div class="ser-row1">
+            <span class="mod-badge">MR</span>
+            <span class="ser-title">FAT: BH Ax LAVA-Flex</span>
+            <span class="ser-count mono">172</span>
+          </div>
+          <div class="ser-meta mono">
+            <span>512×512 · 16-bit</span>
+            <span>Explicit VR LE</span>
+          </div>
+        </div>
+        <div class="tree-series">
+          <div class="ser-row1">
+            <span class="mod-badge">MR</span>
+            <span class="ser-title">InPhase: BH Ax LAVA-Flex</span>
+            <span class="ser-count mono">173</span>
+          </div>
+          <div class="ser-meta mono">
+            <span>512×512 · 16-bit</span>
+            <span>Explicit VR LE</span>
+          </div>
+        </div>
+
+        <div class="tree-patient" style="margin-top:10px;">
+          <span>▾ LI CHUN (李春)</span>
+          <span class="mono" style="font-size:11px;color:#8b949e;">ID:3955198</span>
+        </div>
+        <div class="tree-study">
+          <span>▾ Digital Mammography Screening</span>
+          <span class="mono">5 im</span>
+        </div>
+        <div class="tree-series">
+          <div class="ser-row1">
+            <span class="mod-badge mg">MG</span>
+            <span class="ser-title">RCC Breast Screening</span>
+            <span class="ser-count mono">5</span>
+          </div>
+          <div class="ser-meta mono">
+            <span>3328×4096 · 12-bit</span>
+            <span>26.0 MB / frame</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center 1x2 Viewports -->
+    <main class="viewports">
+      <!-- Viewport 1 (Active) -->
+      <section class="vp active">
+        <img src="ct_soft.png" alt="Axial Slice Soft Window">
+        <svg class="ruler-svg" viewBox="0 0 340 728">
+          <!-- Crosshair Probe at (195, 360) -->
+          <line x1="195" y1="344" x2="195" y2="376" stroke="#f59e0b" stroke-width="1" stroke-dasharray="2,2"/>
+          <line x1="179" y1="360" x2="211" y2="360" stroke="#f59e0b" stroke-width="1" stroke-dasharray="2,2"/>
+          <circle cx="195" cy="360" r="2.5" fill="#f59e0b"/>
+          <!-- Calibrated Length Measurement -->
+          <line x1="118" y1="310" x2="226" y2="342" stroke="#f59e0b" stroke-width="1.75"/>
+          <circle cx="118" cy="310" r="3.5" fill="#000" stroke="#f59e0b" stroke-width="1.75"/>
+          <circle cx="226" cy="342" r="3.5" fill="#000" stroke="#f59e0b" stroke-width="1.75"/>
+          <rect x="142" y="286" width="68" height="18" rx="3" fill="rgba(8,10,15,0.88)" stroke="rgba(245,158,11,0.5)"/>
+          <text x="176" y="298" fill="#fbbf24" font-size="11" font-family="JetBrains Mono, monospace" text-anchor="middle">54.8 mm</text>
+        </svg>
+        <div class="hud hud-tl">
+          <div class="hud-strong">LUO^ShanHeng</div>
+          <div class="mono">ID: 0000000499 · M · 54Y</div>
+          <div class="hud-muted mono">2026-05-19 09:20:10</div>
+        </div>
+        <div class="hud hud-tr">
+          <div class="hud-strong">CUHK-ShenZhen Medical Centre</div>
+          <div>GE SIGNA Architect AIR · <span class="hud-accent">MR</span></div>
+          <div class="hud-muted">WATER: BH Ax LAVA-Flex</div>
+        </div>
+        <div class="scale-bar mono">50 mm</div>
+        <div class="hud hud-bl mono">
+          <div class="hud-strong">Im: 36 / 172 <span class="hud-muted">(Series #4)</span></div>
+          <div>Loc: -64.20 mm · Thk: 3.0 mm</div>
+          <div>Zoom: 118% · Fit [1:1]</div>
+        </div>
+        <div class="hud hud-br mono">
+          <div class="hud-strong">WL: 40 &nbsp; WW: 400 <span class="hud-muted">[F2]</span></div>
+          <div class="hud-muted">LUT 64K: 0.03 ms · 16-bit</div>
+          <div class="hud-probe">XY (284, 261) = 312 (Raw: 312)</div>
+        </div>
+      </section>
+
+      <!-- Viewport 2 (Comparison Window) -->
+      <section class="vp">
+        <img src="ct_lung.png" alt="Axial Slice High Contrast Window">
+        <div class="hud hud-tl">
+          <div class="hud-strong">LUO^ShanHeng</div>
+          <div class="mono">ID: 0000000499</div>
+        </div>
+        <div class="hud hud-tr">
+          <div><span class="hud-accent">MR</span> · High-Contrast Preset</div>
+          <div class="hud-muted">WATER: BH Ax LAVA-Flex</div>
+        </div>
+        <div class="hud hud-bl mono">
+          <div class="hud-strong">Im: 36 / 172 <span class="hud-muted">(Linked)</span></div>
+          <div>Loc: -64.20 mm · Zoom: 118%</div>
+        </div>
+        <div class="hud hud-br mono">
+          <div class="hud-strong">WL: -600 &nbsp; WW: 1500 <span class="hud-muted">[F3]</span></div>
+          <div class="hud-muted">Cached · 0.02 ms</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Right Inspector Panel: DICOM Tags & odin-dcm Diagnostics -->
+    <aside class="inspector">
+      <div class="tabs">
+        <div class="tab active"><ryugi-icon name="list-tree" size="13"></ryugi-icon>DICOM Tags (148)</div>
+        <div class="tab"><ryugi-icon name="cpu" size="13"></ryugi-icon>解码诊断 (0.19 ms)</div>
+      </div>
+      <div class="diag-summary mono">
+        <div class="diag-item"><span>Transfer Syntax</span><b>Explicit VR LE (.1.2.1)</b></div>
+        <div class="diag-item"><span>Geometry / Photometric</span><b>512×512×1 · MONOCHROME2</b></div>
+        <div class="diag-item"><span>Bits (Alloc / Stored / High)</span><b>16 / 16 / 15 (Signed)</b></div>
+        <div class="diag-item"><span>odin-dcm Parse / Decode</span><b style="color:#4cc38a;">0.14 ms / 0.19 ms (0 alloc)</b></div>
+      </div>
+      <div class="search-box" style="margin-top:2px;">
+        <ryugi-icon name="filter" size="13"></ryugi-icon>
+        <span class="mono" style="color:#e5e7eb;">0028,</span>
+        <span style="margin-left:auto;font-size:11px;color:#6b7280;">14 matches</span>
+      </div>
+      <div class="tag-table mono">
+        <div class="tag-hdr"><span>Tag</span><span>VR</span><span>Keyword</span><span>Value</span></div>
+        <div class="tag-row"><span class="tag-id">(0008,0005)</span><span class="tag-vr">CS</span><span class="tag-kw">SpecificCharacterSet</span><span class="tag-val">ISO_IR 100</span></div>
+        <div class="tag-row"><span class="tag-id">(0008,0020)</span><span class="tag-vr">DA</span><span class="tag-kw">StudyDate</span><span class="tag-val">20260519</span></div>
+        <div class="tag-row"><span class="tag-id">(0008,0060)</span><span class="tag-vr">CS</span><span class="tag-kw">Modality</span><span class="tag-val">MR</span></div>
+        <div class="tag-row"><span class="tag-id">(0008,0080)</span><span class="tag-vr">LO</span><span class="tag-kw">InstitutionName</span><span class="tag-val">CUHK-ShenZhen Medical Centre</span></div>
+        <div class="tag-row"><span class="tag-id">(0008,103E)</span><span class="tag-vr">LO</span><span class="tag-kw">SeriesDescription</span><span class="tag-val">WATER: BH Ax LAVA-Flex</span></div>
+        <div class="tag-row"><span class="tag-id">(0010,0010)</span><span class="tag-vr">PN</span><span class="tag-kw">PatientName</span><span class="tag-val">LUO^ShanHeng</span></div>
+        <div class="tag-row"><span class="tag-id">(0010,0020)</span><span class="tag-vr">LO</span><span class="tag-kw">PatientID</span><span class="tag-val">0000000499</span></div>
+        <div class="tag-row"><span class="tag-id">(0018,0050)</span><span class="tag-vr">DS</span><span class="tag-kw">SliceThickness</span><span class="tag-val">3.0</span></div>
+        <div class="tag-row"><span class="tag-id">(0020,0013)</span><span class="tag-vr">IS</span><span class="tag-kw">InstanceNumber</span><span class="tag-val">36</span></div>
+        <div class="tag-row"><span class="tag-id">(0020,1041)</span><span class="tag-vr">DS</span><span class="tag-kw">SliceLocation</span><span class="tag-val">-64.2000</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,0002)</span><span class="tag-vr">US</span><span class="tag-kw">SamplesPerPixel</span><span class="tag-val">1</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,0004)</span><span class="tag-vr">CS</span><span class="tag-kw">PhotometricInterp</span><span class="tag-val">MONOCHROME2</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,0010)</span><span class="tag-vr">US</span><span class="tag-kw">Rows</span><span class="tag-val">512</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,0011)</span><span class="tag-vr">US</span><span class="tag-kw">Columns</span><span class="tag-val">512</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,0030)</span><span class="tag-vr">DS</span><span class="tag-kw">PixelSpacing</span><span class="tag-val">0.7422 \ 0.7422</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,0100)</span><span class="tag-vr">US</span><span class="tag-kw">BitsAllocated</span><span class="tag-val">16</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,0101)</span><span class="tag-vr">US</span><span class="tag-kw">BitsStored</span><span class="tag-val">16</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,0103)</span><span class="tag-vr">US</span><span class="tag-kw">PixelRepresentation</span><span class="tag-val">1 (Signed)</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,1050)</span><span class="tag-vr">DS</span><span class="tag-kw">WindowCenter</span><span class="tag-val">40.0</span></div>
+        <div class="tag-row hl"><span class="tag-id">(0028,1051)</span><span class="tag-vr">DS</span><span class="tag-kw">WindowWidth</span><span class="tag-val">400.0</span></div>
+        <div class="tag-row"><span class="tag-id">(7FE0,0010)</span><span class="tag-vr">OW</span><span class="tag-kw">PixelData</span><span class="tag-val" style="color:#8b949e;">@0x0014A8 len=524288</span></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Bottom Engine Telemetry Bar -->
+  <footer class="statusbar mono">
+    <div class="status-left">
+      <span class="pill-ok">IDLE 0% CPU</span>
+      <span>目录: D:/Odin/odin-dcm/Dcm (690 切片 · 8 核扫描 23.4 ms)</span>
+      <span>Decode_Pool: 4 workers 就绪</span>
+    </div>
+    <div class="status-right">
+      <span>Frame_Cache: 64 / 256 帧 (32.0 / 512 MB) · 命中率 98.4%</span>
+      <span>Staging: Persistent Mapped (1.0 MB)</span>
+      <span style="color:#79b8ff;">Vulkan 1.3 · 120 FPS</span>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

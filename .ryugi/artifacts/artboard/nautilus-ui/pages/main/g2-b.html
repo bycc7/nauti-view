@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>B · PACS 胶片缩略图卡片列表</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #080a0f; color: #e5e7eb;
+    font-family: "Inter", "Microsoft YaHei", sans-serif;
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .mono { font-family: "JetBrains Mono", "Consolas", monospace; font-variant-numeric: tabular-nums; }
+  .layout { display: grid; grid-template-columns: 272px 1fr; width: 1280px; height: 800px; }
+  .sidebar { background: #0e121a; border-right: 2px solid #388bfd; display: flex; flex-direction: column; }
+  .hdr {
+    height: 40px; padding: 0 12px; background: #0b0e14; border-bottom: 1px solid #1e2636;
+    display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: 12px;
+  }
+  .cards { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .thumb-card {
+    display: flex; gap: 10px; padding: 8px; border-radius: 8px;
+    background: #131822; border: 1px solid #1f2937; align-items: center;
+  }
+  .thumb-card.active { background: rgba(56,139,253,0.14); border-color: #388bfd; }
+  .thumb-img {
+    width: 68px; height: 68px; border-radius: 5px; background: #000;
+    border: 1px solid #262f40; overflow: hidden; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .thumb-img img { width: 100%; height: 100%; object-fit: cover; }
+  .thumb-info { flex: 1; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+  .thumb-title { font-weight: 600; font-size: 12px; color: #f3f4f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thumb-sub { font-size: 11px; color: #9ca3af; }
+
+  .rest { background: #000; display: flex; align-items: center; justify-content: center; position: relative; }
+  .rest img { width: 680px; height: 680px; object-fit: contain; }
+  .callout {
+    position: absolute; top: 24px; left: 24px; padding: 12px 16px; border-radius: 8px;
+    background: rgba(14,18,26,0.92); border: 1px solid #f59e0b; max-width: 440px;
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="hdr">
+      <span>方案 B：胶片缩略图卡片</span>
+      <span class="mono" style="color:#fbbf24;">需后台解码预览图</span>
+    </div>
+    <div class="cards">
+      <div style="font-size:11px;font-weight:600;color:#9ca3af;">LUO^ShanHeng · 2026-05-19</div>
+
+      <div class="thumb-card active">
+        <div class="thumb-img"><img src="ct_soft.png" alt="Thumb 1"></div>
+        <div class="thumb-info">
+          <div class="thumb-title">WATER: BH Ax LAVA</div>
+          <div class="thumb-sub mono">MR · Ser #4 · 36/172</div>
+          <div class="thumb-sub mono" style="color:#79b8ff;">512×512 · 16-bit</div>
+        </div>
+      </div>
+
+      <div class="thumb-card">
+        <div class="thumb-img"><img src="ct_lung.png" alt="Thumb 2"></div>
+        <div class="thumb-info">
+          <div class="thumb-title">FAT: BH Ax LAVA</div>
+          <div class="thumb-sub mono">MR · Ser #5 · 172 im</div>
+          <div class="thumb-sub mono">512×512 · 16-bit</div>
+        </div>
+      </div>
+
+      <div class="thumb-card">
+        <div class="thumb-img"><img src="ct_soft.png" alt="Thumb 3" style="filter:invert(1);"></div>
+        <div class="thumb-info">
+          <div class="thumb-title">InPhase: LAVA-Flex</div>
+          <div class="thumb-sub mono">MR · Ser #6 · 173 im</div>
+          <div class="thumb-sub mono">512×512 · 16-bit</div>
+        </div>
+      </div>
+
+      <div style="font-size:11px;font-weight:600;color:#9ca3af;margin-top:6px;">LI CHUN (李春) · MG</div>
+
+      <div class="thumb-card">
+        <div class="thumb-img"><span class="mono" style="font-size:10px;color:#fbbf24;">MG 26MB</span></div>
+        <div class="thumb-info">
+          <div class="thumb-title">RCC Breast Screening</div>
+          <div class="thumb-sub mono">MG · Ser #1 · 5 im</div>
+          <div class="thumb-sub mono" style="color:#fbbf24;">3328×4096 · 12-bit</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="rest">
+    <img src="ct_soft.png" alt="Viewport">
+    <div class="callout">
+      <div style="font-weight:600;color:#fbbf24;margin-bottom:4px;">左侧序列栏方案 B：PACS 胶片缩略图卡</div>
+      <div style="font-size:12px;color:#d1d5db;line-height:1.5;">
+        视觉上更接近传统医院 PACS，但每个序列需要额外解码一张中间帧并占用 Skald 的 <code>IMAGE_CACHE_MAX_ENTRIES (256)</code> 纹理槽位；同屏仅能放下 5–6 个序列。
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>B · 命令行 dcmdump 风格纯文本转储流</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #080a0f; color: #e5e7eb;
+    font-family: "JetBrains Mono", "Consolas", monospace;
+    font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .page { display: grid; grid-template-columns: 1fr 420px; width: 1280px; height: 800px; }
+  .vp { background: #000; display: flex; align-items: center; justify-content: center; position: relative; }
+  .vp img { width: 580px; height: 580px; object-fit: contain; }
+  .dump-pane { background: #0b0d12; border-left: 1px solid #1e2636; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .pre {
+    flex: 1; background: #06080c; border: 1px solid #1f2937; border-radius: 6px;
+    padding: 10px; color: #9ca3af; line-height: 1.6; white-space: pre; overflow: hidden; font-size: 11px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="vp">
+    <img src="ct_soft.png" alt="J2K">
+  </div>
+  <aside class="dump-pane">
+    <div style="font-weight:600;color:#e5e7eb;">RAW DCMDUMP LOG STREAM</div>
+    <div class="pre"># file: corpus_ext/693_J2KR.dcm
+# size: 186804 bytes
+# preamble: yes (DICM)
+# transfer_syntax: 1.2.840.10008.1.2.4.90
+
+@0x000084 (0002,0000) UL       len=4        194
+@0x000090 (0002,0001) OB       len=2        \x00\x01
+@0x00009E (0002,0002) UI       len=26       1.2.840.10008.5.1.4.1.1.2
+@0x0000C0 (0002,0010) UI       len=22       1.2.840.10008.1.2.4.90
+@0x000158 (0008,0008) CS       len=16       ORIGINAL\PRIMARY
+@0x000170 (0008,0060) CS       len=2        CT
+@0x000410 (0028,0002) US       len=2        1
+@0x00041A (0028,0004) CS       len=12       MONOCHROME2
+@0x00042E (0028,0010) US       len=2        512
+@0x000438 (0028,0011) US       len=2        512
+@0x000450 (0028,0100) US       len=2        16
+@0x00045A (0028,0101) US       len=2        16
+@0x000464 (0028,0102) US       len=2        15
+@0x00046E (0028,0103) US       len=2        1
+@0x0009BC (7FE0,0010) OB       len=UNDEFINED
+  @0x0009C4 (FFFE,E000) FRAGMENT len=0
+  @0x0009CC (FFFE,E000) FRAGMENT len=184312
+@0x02D9CC (FFFE,E0DD) NONE     len=0
+
+[decode] frame=0 status=OK ms=84.60
+[render] lut64k=0.03ms upload=0.31ms</div>
+  </aside>
+</div>
+</body>
+</html>

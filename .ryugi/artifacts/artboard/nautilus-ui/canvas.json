@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "title": "Nautilus UI 视觉方向与布局探索",
+  "activePage": "main",
+  "pages": [
+    {
+      "id": "main",
+      "name": "工作台视觉与布局"
+    }
+  ],
+  "focus": {
+    "target": "g3",
+    "at": "2026-11-13T11:38:00Z"
+  },
+  "notes": {
+    "r1-title": {
+      "page": "main",
+      "kind": "title",
+      "x": 0,
+      "y": -340,
+      "size": 56,
+      "text": "第 1 轮 UI 方向探索 — 直接在画板上勾选并点击底部 Submit（未改项默认按推荐采纳）"
+    },
+    "why-g1": {
+      "page": "main",
+      "kind": "sticky",
+      "x": 4160,
+      "y": 0,
+      "w": 320,
+      "color": "#cce8df",
+      "text": "推荐 A（放射科暗房固定三栏）：\n1. 纯黑 #000000 视口与 #080A0F 极低眩光外框完全隔离，不干扰 12/16-bit 灰阶辨识；\n2. 相比 B（悬浮抽屉），左右面板不遮挡四角临床叠字（HUD）；\n3. 相比 C（50/50 工程对半），把 65%+ 面积留给影像，同时保留右侧一键折叠的 Tag/解码诊断器。"
+    },
+    "why-g2": {
+      "page": "main",
+      "kind": "sticky",
+      "x": 2800,
+      "y": 1120,
+      "w": 320,
+      "color": "#cce8df",
+      "text": "推荐 A（紧凑层级树 + 模态徽章 + 切片进度条）：\n1. 打开 690 文件或 2915 文件大目录时，零缩略图渲染开销，20ms 即刻可点；\n2. 同屏可容纳 15+ 个序列，带实时切片游标进度条（42/690）与尺寸/位深标签，比缩略图卡片信息密度更高且与 Skald virtual_list 原生契合。"
+    },
+    "r2-title": {
+      "page": "main",
+      "kind": "title",
+      "x": 0,
+      "y": 2088,
+      "size": 56,
+      "text": "第 2 轮 UI 细节（基于已选定的「暗房固定三栏 + 紧凑树」）— 确认视口 HUD 与解码诊断面板形态"
+    },
+    "why-g3": {
+      "page": "main",
+      "kind": "sticky",
+      "x": 2800,
+      "y": 2380,
+      "w": 320,
+      "color": "#cce8df",
+      "text": "推荐 A（完整四象限临床 HUD + 底部探针胶囊）：\n1. 放射科看片截屏与多序列对比时，四象限（患者/序列/层号层厚比例尺/窗位与 HU 探针）一眼对齐；\n2. 搭配快捷键可一键隐藏叠字，兼顾纯净看片。"
+    },
+    "why-g4": {
+      "page": "main",
+      "kind": "sticky",
+      "x": 2800,
+      "y": 3500,
+      "w": 320,
+      "color": "#cce8df",
+      "text": "推荐 A（结构化诊断卡片 + 视口内非图像样本横幅）：\n1. 打开 parametric_map_float.dcm 等无 (7FE0,0010) 样本或损坏码流时，视口中央给出结构化诊断卡片，右侧清晰展示耗时瀑布、Pixel_Info 与 Fragment 表；\n2. 比纯文本日志流更直观定位 odin-dcm 解码状态。"
+    }
+  },
+  "groups": {
+    "g1": {
+      "title": "1. 【分叉项】视觉方向与工作台整体架构",
+      "boards": ["g1-a", "g1-b", "g1-c"],
+      "choose": true,
+      "recommend": "g1-a"
+    },
+    "g2": {
+      "title": "2. 左侧 Study / Series 序列导航栏信息密度",
+      "boards": ["g2-a", "g2-b"],
+      "choose": true,
+      "recommend": "g2-a"
+    },
+    "g3": {
+      "title": "3. 视口内四角临床叠字（HUD）与探针信息密度",
+      "boards": ["g3-a", "g3-b"],
+      "choose": true,
+      "recommend": "g3-a"
+    },
+    "g4": {
+      "title": "4. 右侧「解码诊断」标签页与疑难/无像素样本（如 Float PixelData）呈现方式",
+      "boards": ["g4-a", "g4-b"],
+      "choose": true,
+      "recommend": "g4-a"
+    }
+  },
+  "boards": {
+    "g1-a": {
+      "file": "pages/main/g1-a.html",
+      "page": "main",
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "A · 放射科暗房三栏工作台（Clinical Darkroom Docked）"
+    },
+    "g1-b": {
+      "file": "pages/main/g1-b.html",
+      "page": "main",
+      "x": 1360,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "B · 全画幅沉浸画布 + 悬浮毛玻璃抽屉（Floating HUD）"
+    },
+    "g1-c": {
+      "file": "pages/main/g1-c.html",
+      "page": "main",
+      "x": 2720,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "C · 50/50 编解码工程对账工作台（Codec Workbench）"
+    },
+    "g2-a": {
+      "file": "pages/main/g2-a.html",
+      "page": "main",
+      "x": 0,
+      "y": 1120,
+      "w": 1280,
+      "h": 800,
+      "title": "A · 紧凑层级树 + 模态胶囊 + 实时切片进度条（零缩略图开销）"
+    },
+    "g2-b": {
+      "file": "pages/main/g2-b.html",
+      "page": "main",
+      "x": 1360,
+      "y": 1120,
+      "w": 1280,
+      "h": 800,
+      "title": "B · PACS 胶片缩略图卡片列表（带序列中间帧预览图）"
+    },
+    "g3-a": {
+      "file": "pages/main/g3-a.html",
+      "page": "main",
+      "x": 0,
+      "y": 2380,
+      "w": 1280,
+      "h": 800,
+      "title": "A · 标准四象限临床 HUD + 物理比例尺 + 琥珀金探针胶囊"
+    },
+    "g3-b": {
+      "file": "pages/main/g3-b.html",
+      "page": "main",
+      "x": 1360,
+      "y": 2380,
+      "w": 1280,
+      "h": 800,
+      "title": "B · 极简底栏 HUD（仅保留底部层号、窗位与探针，四角零文字）"
+    },
+    "g4-a": {
+      "file": "pages/main/g4-a.html",
+      "page": "main",
+      "x": 0,
+      "y": 3500,
+      "w": 1280,
+      "h": 800,
+      "title": "A · 结构化解码诊断面板（耗时分解 + Fragment 表 + 视口内异常样本诊断卡）"
+    },
+    "g4-b": {
+      "file": "pages/main/g4-b.html",
+      "page": "main",
+      "x": 1360,
+      "y": 3500,
+      "w": 1280,
+      "h": 800,
+      "title": "B · 命令行 dcmdump 风格纯文本转储流"
+    }
+  }
+}

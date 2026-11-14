@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>C · 50/50 编解码工程对账工作台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #0d0e11; color: #e4e4e7;
+    font-family: "JetBrains Mono", "Consolas", "Microsoft YaHei", monospace;
+    font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .workbench { display: flex; flex-direction: column; width: 1280px; height: 800px; }
+  .hdr {
+    height: 44px; background: #121317; border-bottom: 1px solid #27272a;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 14px;
+  }
+  .bench-strip { display: flex; gap: 16px; align-items: center; }
+  .metric { display: flex; flex-direction: column; }
+  .metric span { font-size: 10px; color: #71717a; text-transform: uppercase; }
+  .metric b { font-size: 13px; color: #10b981; }
+
+  .split-50 { flex: 1; display: grid; grid-template-columns: 580px 1fr; height: 756px; }
+  .left-img { background: #050608; border-right: 1px solid #27272a; display: flex; flex-direction: column; }
+  .img-box { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; background: #000; }
+  .img-box img { width: 470px; height: 470px; object-fit: contain; }
+  .file-bar { height: 140px; border-top: 1px solid #27272a; background: #101114; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .file-row { padding: 4px 8px; border-radius: 4px; display: flex; justify-content: space-between; color: #a1a1aa; }
+  .file-row.active { background: rgba(16,185,129,0.14); color: #34d399; border: 1px solid rgba(16,185,129,0.35); }
+
+  .right-diag { background: #0d0e11; display: flex; flex-direction: column; }
+  .sec-title {
+    height: 30px; background: #14151a; border-bottom: 1px solid #27272a;
+    padding: 0 12px; display: flex; align-items: center; justify-content: space-between;
+    color: #a1a1aa; font-weight: 600;
+  }
+  .t-grid { flex: 1; display: flex; flex-direction: column; }
+  .t-row {
+    display: grid; grid-template-columns: 76px 86px 40px 80px 150px 1fr;
+    height: 25px; align-items: center; padding: 0 12px; border-bottom: 1px solid #1c1d22;
+  }
+  .t-row.head { background: #121318; color: #71717a; font-weight: 600; font-size: 11px; }
+  .frag-box { height: 170px; border-top: 1px solid #27272a; background: #101115; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="workbench">
+  <header class="hdr">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-weight:700;color:#10b981;font-size:14px;">NAUTILUS // CODEC WORKBENCH</span>
+      <span style="color:#71717a;">D:/Odin/odin-dcm/Dcm/…/36.dcm</span>
+    </div>
+    <div class="bench-strip">
+      <div class="metric"><span>mmap + Parse</span><b>0.14 ms (0 alloc)</b></div>
+      <div class="metric"><span>pixel_decode_frame</span><b>0.19 ms</b></div>
+      <div class="metric"><span>64K LUT → RGBA8</span><b>0.03 ms</b></div>
+      <div class="metric"><span>Vk Upload (No-Mip)</span><b>0.28 ms</b></div>
+    </div>
+  </header>
+
+  <div class="split-50">
+    <div class="left-img">
+      <div class="img-box">
+        <img src="ct_soft.png" alt="Preview">
+        <div style="position:absolute;top:10px;left:12px;color:#34d399;">512×512 · 16-bit Signed · WL 40/400</div>
+        <div style="position:absolute;bottom:10px;right:12px;color:#fbbf24;">Raw[284,261] = 0x0138 (312)</div>
+      </div>
+      <div class="file-bar">
+        <div style="font-size:11px;color:#71717a;margin-bottom:2px;">CORPUS SAMPLES (D:/Odin/odin-dcm/Dcm &amp; corpus_ext)</div>
+        <div class="file-row active"><span>36.dcm (Explicit VR LE · 512×512 MR)</span><span>540 KB · PASS</span></div>
+        <div class="file-row"><span>01662__zip__MG3955198-Li Chun_5.DCM (3328×4096 MG)</span><span>26.0 MB · PASS</span></div>
+        <div class="file-row"><span>693_J2KR.dcm (JPEG 2000 Lossless .90)</span><span>84.6 ms · PASS</span></div>
+        <div class="file-row"><span>parametric_map_float.dcm (Float PixelData 7FE0,0008)</span><span style="color:#f87171;">DIAG ONLY (No 7FE0,0010)</span></div>
+      </div>
+    </div>
+
+    <div class="right-diag">
+      <div class="sec-title">
+        <span>DOCUMENT ELEMENT POOL (doc.elements: 148 nodes, 0 heap allocs)</span>
+        <span style="color:#10b981;">stop_before_tag: OFF</span>
+      </div>
+      <div class="t-grid">
+        <div class="t-row head"><span>Offset</span><span>Tag</span><span>VR</span><span>Length</span><span>Keyword</span><span>Decoded Value (UTF-8 / GB18030)</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000084</span><span style="color:#38bdf8;">(0002,0010)</span><span style="color:#fbbf24;">UI</span><span>20</span><span>TransferSyntaxUID</span><span>1.2.840.10008.1.2.1 (Explicit VR LE)</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000110</span><span style="color:#38bdf8;">(0008,0005)</span><span style="color:#fbbf24;">CS</span><span>10</span><span>SpecificCharacterSet</span><span>ISO_IR 100</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000126</span><span style="color:#38bdf8;">(0008,0008)</span><span style="color:#fbbf24;">CS</span><span>28</span><span>ImageType</span><span>DERIVED\PRIMARY\DIXON\WATER</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x00018E</span><span style="color:#38bdf8;">(0008,0060)</span><span style="color:#fbbf24;">CS</span><span>2</span><span>Modality</span><span>MR</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x0001B2</span><span style="color:#38bdf8;">(0008,0080)</span><span style="color:#fbbf24;">LO</span><span>28</span><span>InstitutionName</span><span>CUHK-ShenZhen Medical Centre</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000240</span><span style="color:#38bdf8;">(0008,103E)</span><span style="color:#fbbf24;">LO</span><span>22</span><span>SeriesDescription</span><span>WATER: BH Ax LAVA-Flex</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x00031C</span><span style="color:#38bdf8;">(0010,0010)</span><span style="color:#fbbf24;">PN</span><span>12</span><span>PatientName</span><span>LUO^ShanHeng</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000334</span><span style="color:#38bdf8;">(0010,0020)</span><span style="color:#fbbf24;">LO</span><span>10</span><span>PatientID</span><span>0000000499</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000512</span><span style="color:#38bdf8;">(0028,0010)</span><span style="color:#fbbf24;">US</span><span>2</span><span>Rows</span><span>512</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x00051C</span><span style="color:#38bdf8;">(0028,0011)</span><span style="color:#fbbf24;">US</span><span>2</span><span>Columns</span><span>512</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000548</span><span style="color:#38bdf8;">(0028,0100)</span><span style="color:#fbbf24;">US</span><span>2</span><span>BitsAllocated</span><span>16</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000552</span><span style="color:#38bdf8;">(0028,0101)</span><span style="color:#fbbf24;">US</span><span>2</span><span>BitsStored</span><span>16</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000566</span><span style="color:#38bdf8;">(0028,1050)</span><span style="color:#fbbf24;">DS</span><span>4</span><span>WindowCenter</span><span>40.0</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x000572</span><span style="color:#38bdf8;">(0028,1051)</span><span style="color:#fbbf24;">DS</span><span>6</span><span>WindowWidth</span><span>400.0</span></div>
+        <div class="t-row"><span style="color:#71717a;">@0x0014A8</span><span style="color:#38bdf8;">(7FE0,0010)</span><span style="color:#fbbf24;">OW</span><span>524288</span><span>PixelData</span><span style="color:#10b981;">Native LE · 1 frame × 524,288 B</span></div>
+      </div>
+      <div class="frag-box">
+        <div style="color:#a1a1aa;font-weight:600;">DIAGNOSTIC &amp; PIXEL PIPELINE CONTRACT</div>
+        <div style="color:#71717a;">• document_error(doc): kind = .None (tag = 0000,0000, offset = 0x0, depth = 0)</div>
+        <div style="color:#71717a;">• Pixel_Info: rows=512, cols=512, frames=1, samples=1, bps=2, signed=true, native=true</div>
+        <div style="color:#34d399;">• 64K LUT verification vs dicom.render_gray8: 262,144 / 262,144 bytes exact match</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

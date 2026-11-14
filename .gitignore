@@ -1,0 +1,12 @@
+# Ryugi artifacts (keep docs specs)
+#.ryugi/artifacts/.state/
+#.ryugi/config.json
+
+# Build output
+*.exe
+*.pdb
+*.obj
+*.tmp
+
+# SDD workspace
+#.ryugi/sdd/

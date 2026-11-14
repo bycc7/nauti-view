@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A · 标准四象限临床 HUD + 物理比例尺 + 琥珀金探针胶囊</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #080a0f; color: #e5e7eb;
+    font-family: "Inter", "Microsoft YaHei", sans-serif;
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .mono { font-family: "JetBrains Mono", "Consolas", monospace; font-variant-numeric: tabular-nums; }
+  .grid-2x2 {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    gap: 2px; width: 1280px; height: 800px; background: #1e2636; padding: 2px;
+  }
+  .vp { position: relative; background: #000000; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid #141923; }
+  .vp.active { border: 1.5px solid #388bfd; }
+  .vp img { width: 88%; height: 88%; object-fit: contain; }
+  .hud {
+    position: absolute; font-size: 11.5px; line-height: 1.45; color: #d1d5db;
+    text-shadow: 0 1px 2px #000, 0 0 4px #000;
+  }
+  .tl { top: 10px; left: 12px; }
+  .tr { top: 10px; right: 12px; text-align: right; }
+  .bl { bottom: 10px; left: 12px; }
+  .br { bottom: 10px; right: 12px; text-align: right; }
+  .strong { color: #ffffff; font-weight: 600; }
+  .muted { color: #9ca3af; }
+  .accent { color: #79b8ff; font-weight: 600; }
+  .probe-pill {
+    display: inline-block; margin-top: 3px; padding: 2px 7px; border-radius: 4px;
+    background: rgba(11,14,20,0.88); border: 1px solid rgba(245,158,11,0.55); color: #fbbf24; font-weight: 600;
+  }
+  .scale-v {
+    position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+    height: 120px; width: 8px; border-right: 1.5px solid #79b8ff;
+    border-top: 1.5px solid #79b8ff; border-bottom: 1.5px solid #79b8ff;
+  }
+  .scale-label {
+    position: absolute; right: 26px; top: 50%; transform: translateY(-50%);
+    font-size: 10px; color: #79b8ff;
+  }
+</style>
+</head>
+<body>
+<div class="grid-2x2">
+  <!-- Viewport 1: Active with Full 4-Corner HUD + Ruler + Angle -->
+  <section class="vp active">
+    <img src="ct_soft.png" alt="VP1">
+    <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;" viewBox="0 0 636 396">
+      <!-- Length Ruler -->
+      <line x1="230" y1="168" x2="365" y2="210" stroke="#f59e0b" stroke-width="1.8"/>
+      <circle cx="230" cy="168" r="3.5" fill="#000" stroke="#f59e0b" stroke-width="1.8"/>
+      <circle cx="365" cy="210" r="3.5" fill="#000" stroke="#f59e0b" stroke-width="1.8"/>
+      <rect x="268" y="145" width="66" height="18" rx="3" fill="rgba(8,10,15,0.88)" stroke="rgba(245,158,11,0.55)"/>
+      <text x="301" y="158" fill="#fbbf24" font-size="11" font-family="JetBrains Mono, monospace" text-anchor="middle">54.8 mm</text>
+      <!-- Angle Measurement -->
+      <polyline points="210,260 265,295 330,268" fill="none" stroke="#38bdf8" stroke-width="1.8"/>
+      <circle cx="210" cy="260" r="3" fill="#000" stroke="#38bdf8" stroke-width="1.8"/>
+      <circle cx="265" cy="295" r="3.5" fill="#38bdf8"/>
+      <circle cx="330" cy="268" r="3" fill="#000" stroke="#38bdf8" stroke-width="1.8"/>
+      <text x="268" y="314" fill="#38bdf8" font-size="11" font-family="JetBrains Mono, monospace" text-anchor="middle">124.6°</text>
+    </svg>
+    <div class="hud tl">
+      <div class="strong">LUO^ShanHeng <span class="muted">(ID: 0000000499)</span></div>
+      <div class="mono muted">2026-05-19 · M · 54Y</div>
+    </div>
+    <div class="hud tr">
+      <div class="strong">CUHK-ShenZhen Medical Centre</div>
+      <div><span class="accent">MR</span> · WATER: BH Ax LAVA-Flex</div>
+    </div>
+    <div class="scale-v"></div>
+    <div class="scale-label mono">50 mm</div>
+    <div class="hud bl mono">
+      <div class="strong">Im: 36 / 172 <span class="muted">(Ser #4)</span></div>
+      <div>Loc: -64.20 mm · Thk: 3.0 mm</div>
+      <div class="muted">Zoom: 100% · PixelSpacing: 0.742 mm</div>
+    </div>
+    <div class="hud br mono">
+      <div class="strong">WL: 40 &nbsp; WW: 400 <span class="muted">[F2]</span></div>
+      <div class="muted">64K LUT: 0.03 ms</div>
+      <div class="probe-pill">XY (284, 261) = 312 (Raw: 312)</div>
+    </div>
+  </section>
+
+  <!-- Viewport 2 -->
+  <section class="vp">
+    <img src="ct_lung.png" alt="VP2">
+    <div class="hud tl">
+      <div class="strong">LUO^ShanHeng</div>
+      <div class="mono muted">Ser #4 · High Contrast Window</div>
+    </div>
+    <div class="hud tr">
+      <div><span class="accent">MR</span> · WATER LAVA-Flex</div>
+    </div>
+    <div class="hud bl mono">
+      <div class="strong">Im: 36 / 172</div>
+      <div>Loc: -64.20 mm · Thk: 3.0 mm</div>
+    </div>
+    <div class="hud br mono">
+      <div class="strong">WL: -600 &nbsp; WW: 1500 <span class="muted">[F3]</span></div>
+      <div class="muted">Cached · 0.02 ms</div>
+    </div>
+  </section>
+
+  <!-- Viewport 3 -->
+  <section class="vp">
+    <img src="ct_soft.png" alt="VP3" style="filter:invert(1);">
+    <div class="hud tl">
+      <div class="strong">LUO^ShanHeng</div>
+      <div class="mono muted">Ser #4 · Inverted [I]</div>
+    </div>
+    <div class="hud tr">
+      <div><span class="accent">MR</span> · MONOCHROME1 Emulation</div>
+    </div>
+    <div class="hud bl mono">
+      <div class="strong">Im: 36 / 172</div>
+      <div>Zoom: 100% · Rot: 0°</div>
+    </div>
+    <div class="hud br mono">
+      <div class="strong">WL: 40 &nbsp; WW: 400 · INV</div>
+    </div>
+  </section>
+
+  <!-- Viewport 4: Mammography 26MB Proxy/Full Indicator -->
+  <section class="vp">
+    <img src="ct_soft.png" alt="VP4" style="transform:scaleX(-1);">
+    <div class="hud tl">
+      <div class="strong">LI CHUN (李春) <span class="muted">(ID: 3955198)</span></div>
+      <div class="mono muted">3328×4096 · 16-bit (12-stored) · 26.0 MB</div>
+    </div>
+    <div class="hud tr">
+      <div><span style="color:#fbbf24;font-weight:700;">MG</span> · RCC Breast Screening</div>
+      <div class="mono" style="color:#4cc38a;">Full-Res Texture Ready (14.2 ms)</div>
+    </div>
+    <div class="hud bl mono">
+      <div class="strong">Im: 1 / 5</div>
+      <div class="muted">ImagerPixelSpacing: 0.070 mm (Imager)</div>
+    </div>
+    <div class="hud br mono">
+      <div class="strong">WL: 2048 &nbsp; WW: 4096 <span class="muted">[F1]</span></div>
+      <div class="muted">nautilus://vp/3/full (No-Mip)</div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

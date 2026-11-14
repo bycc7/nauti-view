@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>B · 全画幅沉浸画布 + 悬浮毛玻璃抽屉</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #000000; color: #eef0f5;
+    font-family: "Inter", "Microsoft YaHei", sans-serif;
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .mono { font-family: "JetBrains Mono", "Consolas", monospace; font-variant-numeric: tabular-nums; }
+  .canvas-full {
+    position: relative; width: 1280px; height: 800px; background: #000000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .canvas-full img { width: 720px; height: 720px; object-fit: contain; filter: contrast(1.08); }
+
+  /* Floating Top Pill Toolbar */
+  .float-top {
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+    height: 42px; padding: 0 14px; border-radius: 12px;
+    background: rgba(15, 18, 26, 0.84); border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.65);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .pill-btn {
+    height: 28px; padding: 0 10px; border-radius: 7px; color: #d1d5db;
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  }
+  .pill-btn.active { background: #388bfd; color: #ffffff; font-weight: 600; }
+  .sep { width: 1px; height: 18px; background: rgba(255,255,255,0.12); }
+
+  /* Floating Left Series Strip */
+  .float-left {
+    position: absolute; top: 76px; left: 16px; width: 220px;
+    border-radius: 12px; background: rgba(15, 18, 26, 0.82);
+    border: 1px solid rgba(255,255,255,0.1); padding: 10px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .fl-hdr { font-size: 11px; font-weight: 600; color: #9ca3af; display: flex; justify-content: space-between; }
+  .fl-card {
+    padding: 8px; border-radius: 8px; background: rgba(255,255,255,0.04);
+    border: 1px solid transparent; display: flex; flex-direction: column; gap: 3px;
+  }
+  .fl-card.active { background: rgba(56,139,253,0.18); border-color: #388bfd; }
+
+  /* Floating Right Tag Overlay Drawer */
+  .float-right {
+    position: absolute; top: 76px; right: 16px; bottom: 56px; width: 320px;
+    border-radius: 12px; background: rgba(15, 18, 26, 0.86);
+    border: 1px solid rgba(255,255,255,0.12); padding: 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .tag-mini { display: flex; justify-content: space-between; font-size: 11.5px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+
+  /* Floating Bottom Scrubber */
+  .float-bottom {
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    width: 620px; height: 36px; border-radius: 10px;
+    background: rgba(15, 18, 26, 0.84); border: 1px solid rgba(255,255,255,0.12);
+    display: flex; align-items: center; padding: 0 14px; gap: 12px; font-size: 12px;
+  }
+  .scrubber { flex: 1; height: 4px; background: #262c3a; border-radius: 2px; position: relative; }
+  .scrubber-fill { width: 22%; height: 100%; background: #388bfd; border-radius: 2px; }
+  .scrubber-thumb { position: absolute; left: 22%; top: -4px; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid #388bfd; }
+
+  /* Corner HUD pushed inward to avoid floating panels */
+  .hud-center-tl { position: absolute; top: 78px; left: 256px; font-size: 12px; color: #9ca3af; text-shadow: 0 1px 3px #000; }
+  .hud-center-br { position: absolute; bottom: 68px; right: 356px; text-align: right; font-size: 12px; color: #9ca3af; text-shadow: 0 1px 3px #000; }
+</style>
+</head>
+<body>
+<div class="canvas-full">
+  <img src="ct_soft.png" alt="Full Bleed Canvas">
+
+  <div class="hud-center-tl mono">
+    <div style="color:#fff;font-weight:600;font-size:13px;">LUO^ShanHeng · 0000000499</div>
+    <div>WATER: BH Ax LAVA-Flex · 512×512</div>
+  </div>
+
+  <div class="hud-center-br mono">
+    <div style="color:#fff;font-weight:600;">WL: 40 / WW: 400</div>
+    <div style="color:#fbbf24;">XY (284, 261) = 312</div>
+  </div>
+
+  <!-- Floating Top Pill -->
+  <div class="float-top">
+    <span style="font-weight:700;color:#fff;padding-right:4px;">NAUTILUS</span>
+    <div class="sep"></div>
+    <div class="pill-btn"><ryugi-icon name="folder-open" size="14"></ryugi-icon>打开</div>
+    <div class="pill-btn active"><ryugi-icon name="sun-medium" size="14"></ryugi-icon>调窗</div>
+    <div class="pill-btn"><ryugi-icon name="move" size="14"></ryugi-icon>平移</div>
+    <div class="pill-btn"><ryugi-icon name="ruler" size="14"></ryugi-icon>测量</div>
+    <div class="sep"></div>
+    <div class="pill-btn">1×1</div>
+    <div class="pill-btn">2×2</div>
+    <div class="sep"></div>
+    <div class="pill-btn" style="color:#79b8ff;">浮层面板 ▾</div>
+  </div>
+
+  <!-- Floating Left Series Strip -->
+  <div class="float-left">
+    <div class="fl-hdr"><span>序列抽屉 (浮层)</span><span class="mono">690 im</span></div>
+    <div class="fl-card active">
+      <div style="font-weight:600;color:#fff;font-size:12px;">MR · WATER LAVA-Flex</div>
+      <div class="mono" style="font-size:11px;color:#79b8ff;">Slice 36 / 172 · 512×512</div>
+    </div>
+    <div class="fl-card">
+      <div style="font-weight:500;color:#d1d5db;font-size:12px;">MR · FAT LAVA-Flex</div>
+      <div class="mono" style="font-size:11px;color:#8b949e;">172 slices · 512×512</div>
+    </div>
+    <div class="fl-card">
+      <div style="font-weight:500;color:#d1d5db;font-size:12px;">MG · LI CHUN RCC</div>
+      <div class="mono" style="font-size:11px;color:#fbbf24;">3328×4096 · 26.0 MB</div>
+    </div>
+  </div>
+
+  <!-- Floating Right Inspector Drawer -->
+  <div class="float-right mono">
+    <div class="fl-hdr"><span>DICOM TAGS 浮层抽屉</span><span style="color:#4cc38a;">0.14 ms</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(0008,0060) Modality</span><span>MR</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(0010,0010) PatientName</span><span>LUO^ShanHeng</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(0020,0013) InstanceNum</span><span>36</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(0028,0010) Rows</span><span>512</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(0028,0011) Columns</span><span>512</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(0028,0100) BitsAllocated</span><span>16</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(0028,1050) WindowCenter</span><span>40.0</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(0028,1051) WindowWidth</span><span>400.0</span></div>
+    <div class="tag-mini"><span style="color:#79b8ff;">(7FE0,0010) PixelData</span><span>524,288 B</span></div>
+  </div>
+
+  <!-- Floating Bottom Cine / Slice Bar -->
+  <div class="float-bottom mono">
+    <ryugi-icon name="play" size="14"></ryugi-icon>
+    <span>Im 36 / 172</span>
+    <div class="scrubber"><div class="scrubber-fill"></div><div class="scrubber-thumb"></div></div>
+    <span style="color:#4cc38a;">LUT 0.03ms · 120fps</span>
+  </div>
+</div>
+</body>
+</html>

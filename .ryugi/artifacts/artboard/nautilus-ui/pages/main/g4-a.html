@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A · 结构化解码诊断面板 + 视口内异常样本诊断卡</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 1280px; height: 800px; overflow: hidden;
+    background: #080a0f; color: #e5e7eb;
+    font-family: "Inter", "Microsoft YaHei", sans-serif;
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .mono { font-family: "JetBrains Mono", "Consolas", monospace; font-variant-numeric: tabular-nums; }
+  .page { display: grid; grid-template-columns: 1fr 420px; width: 1280px; height: 800px; }
+
+  /* Left: Viewport showing 1 normal J2K slice + 1 non-standard Float PixelData diagnostic card */
+  .vp-split { display: grid; grid-template-rows: 1fr 1fr; gap: 2px; background: #1e2636; padding: 2px; }
+  .vp { background: #000; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .vp img { width: 350px; height: 350px; object-fit: contain; }
+  .diag-card {
+    width: 560px; padding: 20px 24px; border-radius: 10px;
+    background: #0e121a; border: 1px solid rgba(245,158,11,0.45);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .diag-badge {
+    display: inline-flex; align-items: center; gap: 6px; width: fit-content;
+    padding: 3px 8px; border-radius: 4px; background: rgba(245,158,11,0.16);
+    color: #fbbf24; font-size: 11px; font-weight: 600;
+  }
+
+  /* Right: Structured Decode Diagnostics Tab */
+  .inspector { background: #0e121a; border-left: 1px solid #1e2636; display: flex; flex-direction: column; }
+  .tabs { display: flex; height: 36px; background: #0b0e14; border-bottom: 1px solid #1e2636; }
+  .tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; color: #9ca3af; border-bottom: 2px solid transparent; }
+  .tab.active { color: #f3f4f6; border-bottom-color: #388bfd; background: #0e121a; font-weight: 600; }
+
+  .body { padding: 12px; display: flex; flex-direction: column; gap: 12px; flex: 1; overflow: hidden; }
+  .card { background: #131822; border: 1px solid #1f2937; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .card-title { font-size: 11px; font-weight: 600; text-transform: uppercase; color: #9ca3af; display: flex; justify-content: space-between; }
+
+  .waterfall { display: flex; flex-direction: column; gap: 6px; }
+  .wf-row { display: grid; grid-template-columns: 120px 1fr 58px; align-items: center; gap: 8px; font-size: 11.5px; }
+  .wf-bar-bg { height: 6px; background: #0b0e14; border-radius: 3px; overflow: hidden; }
+  .wf-bar { height: 100%; border-radius: 3px; }
+
+  .kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 11.5px; }
+  .kv span { color: #8b949e; font-size: 10.5px; display: block; }
+  .kv b { color: #e5e7eb; }
+
+  .frag-table { display: flex; flex-direction: column; font-size: 11px; border: 1px solid #1f2937; border-radius: 6px; overflow: hidden; }
+  .frag-r { display: grid; grid-template-columns: 52px 96px 96px 1fr; padding: 5px 10px; border-bottom: 1px solid #1f2937; }
+  .frag-r.hdr { background: #0b0e14; color: #8b949e; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="vp-split">
+    <!-- Top Viewport: Encapsulated J2K Sample -->
+    <div class="vp" style="border:1.5px solid #388bfd;">
+      <img src="ct_soft.png" alt="J2K Decoded">
+      <div style="position:absolute;top:10px;left:12px;font-size:12px;" class="mono">
+        <div style="color:#fff;font-weight:600;">corpus_ext / 693_J2KR.dcm</div>
+        <div style="color:#79b8ff;">JPEG 2000 Lossless (.90) · 5/3 Reversible Wavelet</div>
+      </div>
+      <div style="position:absolute;bottom:10px;right:12px;text-align:right;font-size:12px;" class="mono">
+        <div style="color:#4cc38a;">Decode: 84.6 ms · LUT: 0.03 ms</div>
+        <div style="color:#d1d5db;">Byte-Exact vs pydicom Oracle</div>
+      </div>
+    </div>
+
+    <!-- Bottom Viewport: Edge Sample without (7FE0,0010) -->
+    <div class="vp">
+      <div class="diag-card">
+        <div class="diag-badge"><ryugi-icon name="info" size="14"></ryugi-icon>仅结构数据集 / 非标准像素标签</div>
+        <div style="font-size:14px;font-weight:600;color:#f3f4f6;">corpus_ext / parametric_map_float.dcm</div>
+        <div style="font-size:12px;color:#9ca3af;line-height:1.5;">
+          <code>dicom.Document</code> 解析成功（<b>64 个元素，0 错误</b>），但调用 <code>dicom.pixel_info</code> 返回 <code style="color:#fbbf24;">Pixel_Error.Missing_Image_Attributes</code>：该文件使用 <code>(7FE0,0008) Float Pixel Data</code> 而非标准 <code>(7FE0,0010)</code>。
+        </div>
+        <div class="mono" style="font-size:11px;color:#79b8ff;padding-top:4px;border-top:1px solid #1f2937;">
+          → 右侧「DICOM Tags」与「解码诊断」面板已完整加载全部 64 个元素，可直接检视参数映射表。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Inspector: Active Tab = Decode Diagnostics -->
+  <aside class="inspector">
+    <div class="tabs">
+      <div class="tab"><ryugi-icon name="list-tree" size="13"></ryugi-icon>DICOM Tags (92)</div>
+      <div class="tab active"><ryugi-icon name="activity" size="13"></ryugi-icon>解码诊断 (693_J2KR.dcm)</div>
+    </div>
+
+    <div class="body">
+      <!-- Timing Waterfall Card -->
+      <div class="card">
+        <div class="card-title">
+          <span>单帧管线耗时分解 (Total: 85.12 ms)</span>
+          <span class="mono" style="color:#4cc38a;">红线 ≤ 200 ms PASS</span>
+        </div>
+        <div class="waterfall mono">
+          <div class="wf-row">
+            <span style="color:#9ca3af;">1. mmap + Parse</span>
+            <div class="wf-bar-bg"><div class="wf-bar" style="width:4%;background:#388bfd;"></div></div>
+            <span style="text-align:right;">0.18 ms</span>
+          </div>
+          <div class="wf-row">
+            <span style="color:#9ca3af;">2. J2K 5/3 Decode</span>
+            <div class="wf-bar-bg"><div class="wf-bar" style="width:94%;background:#f59e0b;"></div></div>
+            <span style="text-align:right;color:#fbbf24;">84.60 ms</span>
+          </div>
+          <div class="wf-row">
+            <span style="color:#9ca3af;">3. 64K LUT Map</span>
+            <div class="wf-bar-bg"><div class="wf-bar" style="width:2%;background:#4cc38a;"></div></div>
+            <span style="text-align:right;">0.03 ms</span>
+          </div>
+          <div class="wf-row">
+            <span style="color:#9ca3af;">4. Vk Staging Copy</span>
+            <div class="wf-bar-bg"><div class="wf-bar" style="width:5%;background:#4cc38a;"></div></div>
+            <span style="text-align:right;">0.31 ms</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pixel_Info & Transfer Syntax Matrix -->
+      <div class="card mono">
+        <div class="card-title"><span>dicom.Pixel_Info &amp; Encoding</span><span style="color:#79b8ff;">Encapsulated</span></div>
+        <div class="kv-grid">
+          <div class="kv"><span>Transfer Syntax UID</span><b>1.2.840.10008.1.2.4.90</b></div>
+          <div class="kv"><span>Syntax Name</span><b>JPEG 2000 Lossless</b></div>
+          <div class="kv"><span>Dimensions (R × C × F)</span><b>512 × 512 × 1</b></div>
+          <div class="kv"><span>Photometric</span><b>MONOCHROME2 (1 spp)</b></div>
+          <div class="kv"><span>Bits (Alloc / Stored / High)</span><b>16 / 16 / 15</b></div>
+          <div class="kv"><span>PixelRepresentation</span><b>1 (Signed i16)</b></div>
+          <div class="kv"><span>Rescale Slope / Intercept</span><b>1.0 / -1024.0</b></div>
+          <div class="kv"><span>document_error(doc)</span><b style="color:#4cc38a;">.None (0 warnings)</b></div>
+        </div>
+      </div>
+
+      <!-- Encapsulated Fragments Table -->
+      <div class="card mono" style="flex:1;">
+        <div class="card-title">
+          <span>封装码流分片表 (document_fragments)</span>
+          <span>2 Fragments</span>
+        </div>
+        <div class="frag-table">
+          <div class="frag-r hdr"><span>#</span><span>Offset</span><span>Length</span><span>Role / Codestream</span></div>
+          <div class="frag-r"><span style="color:#8b949e;">Frag 0</span><span style="color:#79b8ff;">@0x0009C4</span><span>0 B</span><span style="color:#9ca3af;">Basic Offset Table (Empty)</span></div>
+          <div class="frag-r"><span style="color:#8b949e;">Frag 1</span><span style="color:#79b8ff;">@0x0009CC</span><span>184,312 B</span><span style="color:#4cc38a;">J2K Codestream (SOC 0xFF4F … EOC)</span></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+</body>
+</html>
