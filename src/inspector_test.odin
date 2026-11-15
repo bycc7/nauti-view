@@ -115,3 +115,23 @@ corpus_ext_163_files_diagnostic_regression :: proc(t: ^testing.T) {
 	testing.expectf(t, decoded_ok >= 120, "expected >=120 decoded in corpus_ext, got %d", decoded_ok)
 	testing.expectf(t, preamble_less_ok >= 5, "expected preamble-less files to parse, got %d", preamble_less_ok)
 }
+
+// The tag table renders patient/series text directly: a GB18030 value
+// must arrive as UTF-8, and the display truncation must not split a rune.
+@(test)
+inspector_decodes_gb18030_tag_values :: proc(t: ^testing.T) {
+	patient := []u8{0xC0, 0xEE, 0xB4, 0xBA} // 李春 (GBK)
+	buf := synth_chinese_series(patient, []u8{0xC8, 0xE9, 0xCF, 0xD9}, true)
+	doc: d.Document
+	d.document_init(&doc)
+	defer d.document_destroy(&doc)
+	testing.expect_value(t, d.document_parse_buffer(&doc, buf), d.Parse_Error.None)
+
+	rows := extract_tag_rows(&doc, context.temp_allocator)
+	for row in rows {
+		if row.keyword != "PatientName" do continue
+		testing.expect_value(t, row.value, "李春")
+		return
+	}
+	testing.expect(t, false, "PatientName row missing")
+}

@@ -142,26 +142,27 @@ frame_cache_put :: proc(c: ^Frame_Cache, entry: ^Cached_Frame) -> bool {
 	size := len(entry.raw) + len(entry.palette_rgb)
 	if size > c.max_bytes do return false
 
-	if old, ok := c.entries[entry.key]; ok {
-		frame_cache_unlink(c, old)
-		c.bytes_used -= len(old.raw) + len(old.palette_rgb)
-		delete_key(&c.entries, entry.key)
-		// old.key.file is the same value as entry.key.file only if the
-		// caller reused the cache's clone; compare pointers instead.
-		if old.key.file != entry.key.file do delete(old.key.file)
-		delete(old.raw)
-		if old.palette_rgb != nil do delete(old.palette_rgb)
-		free(old)
-	}
-
 	// The cache owns the entry allocation and a clone of the file path so
 	// both outlive the caller (whose literal may sit on a stack frame and
-	// whose string is often temp-allocated).
+	// whose string is often temp-allocated). Clone before the replaced
+	// entry is freed: a re-put may hand back the cache's own clone of
+	// the path, which must survive the copy.
 	own := new(Cached_Frame)
 	own^ = entry^
 	if own.key.file != "" do own.key.file = strings.clone(own.key.file)
 	own.prev = nil
 	own.next = nil
+
+	if old, ok := c.entries[entry.key]; ok {
+		frame_cache_unlink(c, old)
+		c.bytes_used -= len(old.raw) + len(old.palette_rgb)
+		delete_key(&c.entries, entry.key)
+		delete(old.key.file)
+		delete(old.raw)
+		if old.palette_rgb != nil do delete(old.palette_rgb)
+		free(old)
+	}
+
 	c.entries[own.key] = own
 	c.bytes_used += size
 	frame_cache_push_front(c, own)

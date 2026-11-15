@@ -10,6 +10,7 @@ package nautilus
 import "core:fmt"
 import "core:math"
 import rl "../vendor/skald"
+import d "../vendor/dicom"
 
 Viewport_Payload :: struct {
 	state: View_State,
@@ -23,7 +24,43 @@ View_State :: struct {
 	path:   string,
 	vp:     Viewport_Window,
 	frame:  ^Cached_Frame,
+	index:  int, // viewport slot this panel renders
+	active: bool, // this panel receives keyboard / toolbar actions
 }
+
+// vp_hover / vp_pressed carry the panel the pointer is over (and last
+// pressed) from the painters — which know their bounds — back to the
+// next frame's `view`, which owns the Msg channel. Main thread only.
+@(private)
+vp_hover: int = -1
+@(private)
+vp_pressed: int = -1
+
+// Viewport_Delta carries the interactive drag result the painter hands
+// back: a W/L drag changes `window`, a middle-drag changes `pan`, a
+// scroll changes `zoom`. The application folds these into real
+// `App_State` on the next update, and caches the drag origins so a
+// multi-frame gesture stays continuous. Filled by painters, consumed
+// (and cleared) by update — both on the main thread.
+Viewport_Delta :: struct {
+	active: bool,
+	vp:     int,
+	// window is the live W/L; wl_origin_* are its pre-drag values.
+	window:      d.Render_Options,
+	wl_origin_w: f64,
+	wl_origin_l: f64,
+	// drag_from is the mouse position captured on the press frame; the
+	// W/L and pan deltas are measured against it.
+	drag_from: [2]f32,
+	// pan is the live position; pan_base is the camera pan at press time.
+	pan:      [2]f32,
+	pan_base: [2]f32,
+	zoomed:   bool,
+	zoom:     f32,
+}
+
+@(private)
+pending_delta: Viewport_Delta
 
 // viewport_rect places the image in canvas-local pixels: contain-fit at
 // zoom 1, then zoom and pan. The quarter-turn swaps the fit box.
@@ -162,18 +199,23 @@ paint_viewport :: proc(payload: ^Viewport_Payload, painter: rl.Canvas_Painter) {
 		rgba := make([]u8, len(frame.raw) / max(frame.info.bytes_per_sample, 1) * 4,
 			context.temp_allocator)
 		if frame_to_rgba(frame, vp.window, rgba) {
-			w := u32(frame.info.cols)
-			h := u32(frame.info.rows)
+			// The GPU quad is axis-aligned, so rotation and flips are
+			// baked into the uploaded pixels (orient_rgba mirrors
+			// canvas_point_to_image exactly).
+			tex, ow, oh := orient_rgba(rgba, frame.info.cols, frame.info.rows,
+				vp.rotate, vp.flip_h, vp.flip_v, context.temp_allocator)
+
+			uw, uh := u32(ow), u32(oh)
 			ok := false
-			if vp.tex_w == w && vp.tex_h == h {
-				ok = rl.image_update_pixels(painter.r, vp.tex_name, w, h, rgba)
+			if vp.tex_w == uw && vp.tex_h == uh {
+				ok = rl.image_update_pixels(painter.r, vp.tex_name, uw, uh, tex)
 			}
 			if !ok {
-				ok = rl.image_load_pixels_opts(painter.r, vp.tex_name, w, h, rgba, false)
+				ok = rl.image_load_pixels_opts(painter.r, vp.tex_name, uw, uh, tex, false)
 			}
 			if ok {
-				vp.tex_w = w
-				vp.tex_h = h
+				vp.tex_w = uw
+				vp.tex_h = uh
 				vp.has_tex = true
 			}
 		}
@@ -186,10 +228,21 @@ paint_viewport :: proc(payload: ^Viewport_Payload, painter: rl.Canvas_Painter) {
 		}
 	}
 
+	// Outline the panel that keyboard and toolbar actions target.
+	if p.state.active {
+		edge := f32(2)
+		rl.draw_rect(painter.r, {b.x, b.y, b.w, edge}, th.color.primary)
+		rl.draw_rect(painter.r, {b.x, b.y + b.h - edge, b.w, edge}, th.color.primary)
+		rl.draw_rect(painter.r, {b.x, b.y, edge, b.h}, th.color.primary)
+		rl.draw_rect(painter.r, {b.x + b.w - edge, b.y, edge, b.h}, th.color.primary)
+	}
+
 	// Hover probe.
 	inside := p.input.mouse_pos.x >= b.x && p.input.mouse_pos.y >= b.y &&
 		p.input.mouse_pos.x < b.x + b.w && p.input.mouse_pos.y < b.y + b.h
 	if inside {
+		vp_hover = p.state.index
+		if p.input.mouse_pressed[.Left] { vp_pressed = p.state.index }
 		if ix, iy, ok := canvas_point_to_image(vp, b, p.input.mouse_pos); ok {
 			vp.probe_valid = true
 			vp.probe_xy = {ix, iy}
@@ -228,38 +281,41 @@ paint_viewport :: proc(payload: ^Viewport_Payload, painter: rl.Canvas_Painter) {
 		}
 	}
 
-	// W/L and pan drags.
+	// W/L and pan drags fold into pending_delta (this `vp` is a per-frame
+	// copy — mutating it would be thrown away); update applies the result
+	// to the real viewport next frame.
 	if p.input.mouse_pressed[.Right] && inside {
-		vp.wl_origin_w = vp.window.width
-		vp.wl_origin_l = vp.window.center
-		vp.wl_drag_origin = p.input.mouse_pos
+		pending_delta.active = true
+		pending_delta.vp = p.state.index
+		pending_delta.window = vp.window
+		pending_delta.wl_origin_w = vp.window.width
+		pending_delta.wl_origin_l = vp.window.center
+		pending_delta.drag_from = p.input.mouse_pos
+	}
+	if p.input.mouse_buttons[.Right] && pending_delta.active && pending_delta.vp == p.state.index && pending_delta.wl_origin_w != 0 {
+		dx := p.input.mouse_pos.x - pending_delta.drag_from.x
+		dy := p.input.mouse_pos.y - pending_delta.drag_from.y
+		w := max(pending_delta.wl_origin_w * math.pow(f64(2), f64(dx) / 256.0), 1)
+		l := pending_delta.wl_origin_l + f64(dy) * pending_delta.wl_origin_w / 512.0
+		pending_delta.window.width = w
+		pending_delta.window.center = l
 	}
 	if p.input.mouse_pressed[.Middle] && inside {
-		vp.pan_origin = p.input.mouse_pos
-		vp.pan_from = vp.pan
+		pending_delta.active = true
+		pending_delta.vp = p.state.index
+		pending_delta.pan = vp.pan
+		pending_delta.pan_base = vp.pan
+		pending_delta.drag_from = p.input.mouse_pos
 	}
-	if p.input.mouse_released[.Right] || p.input.mouse_released[.Middle] {
-		vp.wl_origin_w = 0
-	}
-
-	if p.input.mouse_buttons[.Right] && vp.wl_origin_w != 0 {
-		dx := p.input.mouse_pos.x - vp.wl_drag_origin.x
-		dy := p.input.mouse_pos.y - vp.wl_drag_origin.y
-		w := max(vp.wl_origin_w * math.pow(f64(2), f64(dx) / 256.0), 1)
-		l := vp.wl_origin_l + f64(dy) * vp.wl_origin_w / 512.0
-		if w != vp.window.width || l != vp.window.center {
-			vp.window.width = w
-			vp.window.center = l
-			vp.has_tex = false
-		}
-	}
-	if p.input.mouse_buttons[.Middle] && vp.pan_origin != {0, 0} {
-		vp.pan = vp.pan_from + (p.input.mouse_pos - vp.pan_origin)
-		p.input.mouse_pos = p.input.mouse_pos
+	if p.input.mouse_buttons[.Middle] && pending_delta.active && pending_delta.vp == p.state.index {
+		pending_delta.pan = pending_delta.pan_base + (p.input.mouse_pos - pending_delta.drag_from)
 	}
 
 	if inside && p.input.scroll.y != 0 {
-		vp.zoom = clamp(vp.zoom * math.pow(f32(1.1), p.input.scroll.y), 0.05, 64)
+		pending_delta.active = true
+		pending_delta.vp = p.state.index
+		pending_delta.zoomed = true
+		pending_delta.zoom = clamp(vp.zoom * math.pow(f32(1.1), p.input.scroll.y), 0.05, 64)
 	}
 
 	// Measurement overlay: line + value at its midpoint.
@@ -272,22 +328,27 @@ paint_viewport :: proc(payload: ^Viewport_Payload, painter: rl.Canvas_Painter) {
 			th.color.primary, th.font.size_sm)
 	}
 
-	// 4-corner clinical HUD (g3-a) + bottom-right scale bar.
+	// 4-corner clinical HUD (g3-a) + bottom-right scale bar. Right-side
+	// texts are measured and anchored to the pane's right edge so they
+	// hug the corner at any pane size (2x2 panes are narrow).
+	pad := f32(12)
 	tl := short_name(p.state.path)
-	rl.draw_text(painter.r, tl, b.x + 12, b.y + 20, th.color.fg, th.font.size_sm)
+	rl.draw_text(painter.r, tl, b.x + pad, b.y + 20, th.color.fg, th.font.size_sm)
 	tr := fmt.tprintf("%dx%d  %d-bit %v", frame.info.cols, frame.info.rows,
 		frame.info.bits_stored, frame.info.photometric)
-	rl.draw_text(painter.r, tr, b.x + max(b.w - 220, 12), b.y + 20, th.color.fg_muted, th.font.size_sm)
+	trw, _ := rl.measure_text(painter.r, tr, th.font.size_sm)
+	rl.draw_text(painter.r, tr, b.x + b.w - trw - pad, b.y + 20, th.color.fg_muted, th.font.size_sm)
 
 	bl := fmt.tprintf("W %.0f / L %.0f   %.2fx", vp.window.width, vp.window.center, vp.zoom)
 	if vp.probe_valid {
 		bl = fmt.tprintf("%s   (%d, %d) %.0f", bl, vp.probe_xy.x, vp.probe_xy.y, vp.probe_real)
 	}
-	rl.draw_text(painter.r, bl, b.x + 12, b.y + b.h - 14, th.color.fg_muted, th.font.size_sm)
+	rl.draw_text(painter.r, bl, b.x + pad, b.y + b.h - 14, th.color.fg_muted, th.font.size_sm)
 
 	_, unit := measure_distance({0, 0}, {100, 0}, frame.pixel_spacing, frame.spacing_kind)
 	br := fmt.tprintf("100 px = %.1f %s",
 		(frame.spacing_kind != .None && frame.pixel_spacing[1] > 0) ? 100.0 * frame.pixel_spacing[1] : 100.0,
 		unit)
-	rl.draw_text(painter.r, br, b.x + max(b.w - 200, 12), b.y + b.h - 14, th.color.fg_muted, th.font.size_sm)
+	brw, _ := rl.measure_text(painter.r, br, th.font.size_sm)
+	rl.draw_text(painter.r, br, b.x + b.w - brw - pad, b.y + b.h - 14, th.color.fg_muted, th.font.size_sm)
 }

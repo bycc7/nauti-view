@@ -4,6 +4,7 @@ package nautilus
 // 验证聚合与排序，用合成目录验证无序输入与小写扩展名，并验证非 DICOM
 // 文件被跳过而不是让扫描失败。
 
+import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:testing"
@@ -110,4 +111,41 @@ study_loader_scan_budget :: proc(t: ^testing.T) {
 	ms := elapsed_ms(&sw)
 	defer study_tree_destroy(&tree)
 	testing.expectf(t, ms < 200, "scan took %.1f ms", ms)
+}
+
+// scan_directory hands Scan_Result strings allocated inside worker threads
+// to the calling thread for freeing; both sides must use the caller's
+// allocator. Under any non-default allocator a mismatch shows up as bad
+// frees here, so the whole scan -> build_tree -> destroy cycle must balance.
+@(test)
+study_loader_scan_is_allocator_balanced :: proc(t: ^testing.T) {
+	tmp := context.temp_allocator
+	dir, derr := os.make_directory_temp("", "nautilus_scan_balanced", tmp)
+	if derr != nil {
+		testing.fail_now(t, "cannot make temp dir")
+	}
+	defer os.remove_all(dir)
+
+	names := []string{"b_mid.dcm", "c_last.dcm", "a_first.dcm"}
+	for i in 0 ..< len(names) {
+		path, _ := filepath.join({dir, names[i]}, allocator = tmp)
+		_ = os.write_entire_file(path, synth_dicom_series(i + 1))
+	}
+
+	ta: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&ta, context.allocator)
+	ta.bad_free_callback = mem.tracking_allocator_bad_free_callback_add_to_array
+	own := context.allocator
+	context.allocator = mem.tracking_allocator(&ta)
+	tree := scan_directory(dir)
+	study_tree_destroy(&tree)
+	context.allocator = own
+
+	if len(ta.bad_free_array) != 0 {
+		testing.expectf(t, false, "scan produced %d bad frees, first at %v",
+			len(ta.bad_free_array), ta.bad_free_array[0].location)
+	}
+	testing.expectf(t, ta.current_memory_allocated == 0,
+		"scan + tree leaked %d bytes", ta.current_memory_allocated)
+	mem.tracking_allocator_destroy(&ta)
 }

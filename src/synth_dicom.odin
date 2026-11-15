@@ -44,21 +44,37 @@ synth_us :: proc(w: ^Synth_Writer, group, element: u16, v: u16) {
 }
 
 // synth_dicom_series writes one frame whose identifying tags are set so
-// the loader can group and sort it.
-synth_dicom_series :: proc(instance: int, study := "1.2.3", series := "1.2.3.4") -> []u8 {
+// the loader can group and sort it. The optional arguments drive the
+// sidebar metadata path (patient grouping, series description, geometry);
+// they default to the values the older tests rely on.
+synth_dicom_series :: proc(
+	instance: int,
+	study := "1.2.3",
+	series := "1.2.3.4",
+	description := "",
+	patient_id := "",
+	patient_name := "",
+	modality := "CT",
+	rows := 2,
+	cols := 2,
+	bits := 16,
+) -> []u8 {
 	w: Synth_Writer
 	w.buf = make([dynamic]u8, 0, 512, context.temp_allocator)
 
 	synth_str(&w, 0x0008, 0x0020, "DA", "20240101") // StudyDate
-	synth_str(&w, 0x0008, 0x0060, "CS", "CT") // Modality
+	synth_str(&w, 0x0008, 0x0060, "CS", modality) // Modality
+	synth_str(&w, 0x0008, 0x103E, "LO", description) // SeriesDescription
+	synth_str(&w, 0x0010, 0x0010, "PN", patient_name) // PatientName
+	synth_str(&w, 0x0010, 0x0020, "LO", patient_id) // PatientID
 	synth_str(&w, 0x0020, 0x000D, "UI", study) // StudyInstanceUID
 	synth_str(&w, 0x0020, 0x000E, "UI", series) // SeriesInstanceUID
 	synth_str(&w, 0x0020, 0x0011, "IS", fmt.tprintf("%d", 1)) // SeriesNumber
 	synth_str(&w, 0x0020, 0x0013, "IS", fmt.tprintf("%d", instance)) // InstanceNumber
 	synth_us(&w, 0x0028, 0x0002, 1) // SamplesPerPixel
-	synth_us(&w, 0x0028, 0x0010, 2) // Rows
-	synth_us(&w, 0x0028, 0x0011, 2) // Columns
-	synth_us(&w, 0x0028, 0x0100, 16) // BitsAllocated
+	synth_us(&w, 0x0028, 0x0010, u16(rows)) // Rows
+	synth_us(&w, 0x0028, 0x0011, u16(cols)) // Columns
+	synth_us(&w, 0x0028, 0x0100, u16(bits)) // BitsAllocated
 	synth_us(&w, 0x0028, 0x0101, 16) // BitsStored
 	synth_us(&w, 0x0028, 0x0103, 0) // PixelRepresentation
 	synth_str(&w, 0x0028, 0x0004, "CS", "MONOCHROME2") // PhotometricInterpretation

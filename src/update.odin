@@ -31,12 +31,15 @@ Msg_Kind :: enum u8 {
 	Open_Directory,
 	Tree_Scanned, // a Study_Tree is waiting in `scan_slot`
 	Select_Row,
+	Toggle_Series, // chevron: open/close one series' frame list
 	Page_Next,
 	Page_Prev,
 	Layout_Cycle,
 	Next_Viewport,
+	Set_Active_Vp,
 	Pool_Drained,
 	Toggle_Inspector,
+	Set_Inspector_Tab,
 	Handle_Drop,
 	Noop,
 }
@@ -44,6 +47,7 @@ Msg_Kind :: enum u8 {
 Msg :: struct {
 	kind: Msg_Kind,
 	row:  int,
+	vp:   int, // Page_*: panel to page; Set_Active_Vp: panel to activate
 }
 
 @(private)
@@ -64,8 +68,10 @@ inflight: Inflight
 state_init :: proc() -> App_State {
 	s: App_State
 	frame_cache_init(&s.cache, 256, 512 * 1024 * 1024)
-	s.vp.zoom = 1
-	s.vp.tex_name = "nautilus://vp/0/full"
+	for i in 0 ..< MAX_VIEWPORTS {
+		s.viewports[i].zoom = 1
+		s.viewports[i].tex_name = vp_tex_names[i]
+	}
 	s.layout = .Single
 	decode_pool_init(&g_pool)
 	g_pool_ready = true
@@ -107,7 +113,7 @@ begin_load :: proc(s: ^App_State, path: string) -> rl.Command(Msg) {
 	s.path = fmt.aprintf("%s", path)
 	s.status = .Loading
 	s.load_gen += 1
-	s.vp.has_tex = false
+	vp_active(s).has_tex = false
 	s.frame = nil
 	set_status(s, fmt.aprintf("loading %s", short_name(path)))
 
@@ -180,38 +186,63 @@ install_result :: proc(s: ^App_State, res: Load_Result) {
 
 	s.status = .Ready
 	if s.err != "" do delete(s.err)
-	s.err = ""
-
-	window_reset(s, f)
+	window_reset(vp_active(s), f)
 	// DICOM Rows is the height and Columns the width; the raw frame is
 	// row-major with stride = Columns.
-	s.vp.img_w = f.info.cols
-	s.vp.img_h = f.info.rows
-	s.vp.zoom = 1
-	s.vp.pan = {0, 0}
-	s.vp.flip_h = false
-	s.vp.flip_v = false
-	s.vp.rotate = 0
-	s.vp.tex_w = u32(f.info.cols)
-	s.vp.tex_h = u32(f.info.rows)
-	s.vp.has_tex = false // next draw uploads a fresh texture
+	vp := vp_active(s)
+	vp.img_w = f.info.cols
+	vp.img_h = f.info.rows
+	vp.zoom = 1
+	vp.pan = {0, 0}
+	vp.flip_h = false
+	vp.flip_v = false
+	vp.rotate = 0
+	vp.tex_w = u32(f.info.cols)
+	vp.tex_h = u32(f.info.rows)
+	vp.has_tex = false // next draw uploads a fresh texture
 
 	set_status(s, fmt.aprintf("%s  %dx%d  %d frame(s)  W %.0f / L %.0f  (%.0f ms)",
 		short_name(s.path), f.info.rows, f.info.cols, f.info.frames,
 		f.window.width, f.window.center, res.open_ms))
 }
 
-// window_reset restores the frame's stored VOI (or its auto window).
-window_reset :: proc(s: ^App_State, f: ^Cached_Frame) {
+// window_reset restores the frame's stored VOI (or its auto window)
+// into viewport `vp`.
+window_reset :: proc(vp: ^Viewport_Window, f: ^Cached_Frame) {
 	w := f.window
 	if !w.valid_window {
 		c, width := lut_auto_window(f.info, f.raw)
 		w.center, w.width, w.valid_window = c, width, true
 	}
 	w.invert = f.info.photometric == .Monochrome1
-	s.vp.window = w
-	s.vp.default_window = w
+	vp.window = w
+	vp.default_window = w
 	f.window = w
+}
+
+// apply_viewport_delta folds a painter drag result back into real
+// state. Returns false when the target panel is out of range, so a
+// stale delta from a layout change is dropped instead of corrupting
+// state. When the window changed, the texture is invalidated so the
+// next draw re-maps with the new W/L.
+apply_viewport_delta :: proc(s: ^App_State, d: Viewport_Delta) -> bool {
+	if !d.active || d.vp < 0 || d.vp >= MAX_VIEWPORTS do return false
+	vp := &s.viewports[d.vp]
+	window_changed := vp.window.width != d.window.width || vp.window.center != d.window.center
+	if window_changed {
+		vp.has_tex = false
+	}
+	vp.window = d.window
+	// Keep the drag origins so a next-frame drag continues from here.
+	vp.wl_origin_w = d.wl_origin_w
+	vp.wl_origin_l = d.wl_origin_l
+	vp.pan = d.pan
+	vp.pan_from = d.pan_base
+	vp.pan_origin = d.pan_base
+	if d.zoomed {
+		vp.zoom = d.zoom
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -226,12 +257,9 @@ update :: proc(s: App_State, m: Msg) -> (App_State, rl.Command(Msg)) {
 
 	switch m.kind {
 	case .Open_Dialog:
-		// The picker needs the window handle, which only `view` has, so
-		// the request is parked and `view` runs the modal dialog. SDL's
-		// own dialog is not used: its callback never fires on this
-		// platform (see win32_dialog_windows.odin).
-		dialog_request = .File
-		return ns, rl.Command(Msg){}
+		// Windows parks the request for `view`'s modal COM picker; the
+		// other platforms launch skald's native SDL dialog command.
+		return ns, picker_command(.File)
 
 	case .Load_Requested:
 		sync.lock(&inflight.lock)
@@ -264,15 +292,20 @@ update :: proc(s: App_State, m: Msg) -> (App_State, rl.Command(Msg)) {
 	case .Zoom_Fit:
 		window_apply_preset(&ns, .Fit)
 	case .Flip_H:
-		ns.vp.flip_h = !ns.vp.flip_h
+		vp := vp_active(&ns)
+		vp.flip_h = !vp.flip_h
+		vp.has_tex = false // the texture is baked at upload; re-orient it
 	case .Flip_V:
-		ns.vp.flip_v = !ns.vp.flip_v
+		vp := vp_active(&ns)
+		vp.flip_v = !vp.flip_v
+		vp.has_tex = false
 	case .Rotate:
-		ns.vp.rotate = (ns.vp.rotate + 1) % 4
+		vp := vp_active(&ns)
+		vp.rotate = (vp.rotate + 1) % 4
+		vp.has_tex = false
 
 	case .Open_Directory:
-		dialog_request = .Folder
-		return ns, rl.Command(Msg){}
+		return ns, picker_command(.Folder)
 
 	case .Tree_Scanned:
 		if path, ok := scan_slot_take(); ok {
@@ -284,16 +317,24 @@ update :: proc(s: App_State, m: Msg) -> (App_State, rl.Command(Msg)) {
 	case .Select_Row:
 		select_row(&ns, m.row)
 
+	case .Toggle_Series:
+		toggle_series(&ns, m.row)
+
 	case .Page_Next:
-		page(&ns, .Forward)
+		page(&ns, .Forward, m.vp)
 	case .Page_Prev:
-		page(&ns, .Backward)
+		page(&ns, .Backward, m.vp)
 
 	case .Layout_Cycle:
 		cycle_layout(&ns)
 
 	case .Next_Viewport:
 		ns.active_vp = (ns.active_vp + 1) % layout_count(ns.layout)
+
+	case .Set_Active_Vp:
+		if m.vp >= 0 && m.vp < layout_count(ns.layout) {
+			ns.active_vp = m.vp
+		}
 
 	case .Pool_Drained:
 		drain_pool(&ns)
@@ -302,6 +343,14 @@ update :: proc(s: App_State, m: Msg) -> (App_State, rl.Command(Msg)) {
 
 	case .Toggle_Inspector:
 		ns.inspector.open = !ns.inspector.open
+
+	case .Set_Inspector_Tab:
+		// `row` carries the tab index, matching the tag list's row
+		// convention (see inspector_tab_view).
+		tab := Inspector_Tab(m.row)
+		if tab == Inspector_Tab.Tags || tab == Inspector_Tab.Diagnostics {
+			ns.inspector.active_tab = tab
+		}
 
 	case .Handle_Drop:
 		// The path itself is already parked in `dropped_slot`.
@@ -329,6 +378,12 @@ update :: proc(s: App_State, m: Msg) -> (App_State, rl.Command(Msg)) {
 		cmd := os.is_dir(p) ? begin_scan(&ns, p) : begin_load(&ns, p)
 		delete(p)
 		return ns, cmd
+	}
+	// Fold the painter's drag result (W/L / pan / zoom) into the real
+	// viewport state, then clear it for the next frame.
+	if pending_delta.active {
+		apply_viewport_delta(&ns, pending_delta)
+		pending_delta = {}
 	}
 	return ns, {}
 }
@@ -405,28 +460,41 @@ describe_state :: proc(s: ^App_State) -> string {
 
 describe_frame :: proc(s: ^App_State) -> string {
 	if s.frame == nil do return ""
+	vp := vp_active(s)
 	text := fmt.tprintf("%s  %dx%d  W %.0f / L %.0f  zoom %.2fx",
 		short_name(s.path), s.info.rows, s.info.cols,
-		s.vp.window.width, s.vp.window.center, s.vp.zoom)
-	if s.vp.probe_valid {
+		vp.window.width, vp.window.center, vp.zoom)
+	if vp.probe_valid {
 		text = fmt.tprintf("%s  |  (%d,%d) %.0f", text,
-			s.vp.probe_xy.x, s.vp.probe_xy.y, s.vp.probe_real)
+			vp.probe_xy.x, vp.probe_xy.y, vp.probe_real)
 	}
 	return text
 }
 
 window_apply_preset :: proc(s: ^App_State, which: enum { Reset, Invert, Fit }) {
 	if s.status != .Ready do return
+	vp := vp_active(s)
 	switch which {
 	case .Reset:
-		s.vp.window = s.vp.default_window
-		if s.frame != nil do s.frame.window = s.vp.window
+		// Restore the full initial display state and convert max, not
+		// just the window: undo any rotate / flips / pan / zoom too (see
+		// install_result for the defaults). Writes back to the shared
+		// frame so a multi-viewport invert can't leave it toggled.
+		vp.window = vp.default_window
+		vp.flip_h = false
+		vp.flip_v = false
+		vp.rotate = 0
+		vp.zoom = 1
+		vp.pan = {0, 0}
+		vp.has_tex = false // the texture is baked at upload; re-map it
+		if s.frame != nil do s.frame.window = vp.window
 	case .Invert:
-		s.vp.window.invert = !s.vp.window.invert
-		if s.frame != nil do s.frame.window = s.vp.window
+		vp.window.invert = !vp.window.invert
+		if s.frame != nil do s.frame.window = vp.window
+		vp.has_tex = false
 	case .Fit:
-		s.vp.zoom = 1
-		s.vp.pan = {0, 0}
+		vp.zoom = 1
+		vp.pan = {0, 0}
 	}
 }
 

@@ -6,6 +6,8 @@ package nautilus
 // over the 65,536 possible stored values, then applied as a single
 // table lookup per sample — <0.05 ms build, ~3 ms for a 13.6 MP frame.
 
+import "core:math"
+
 import d "../vendor/dicom"
 
 Lut64K :: [65536]u32
@@ -130,4 +132,48 @@ apply_lut :: proc(lut: ^Lut64K, info: d.Pixel_Info, src: []u8, dst: []u8) -> boo
 	case 2: return apply_lut_u16(lut, src, dst)
 	case:  return false
 	}
+}
+
+// orient_rgba produces the displayed (rotated + flipped) version of a
+// mapped RGBA8 frame for texture upload, matching canvas_point_to_image
+// exactly: displayed pixel (dx, dy) shows the source pixel the pointer
+// map reports at that position. Identity orientation returns `src`
+// itself — no copy, no allocation.
+orient_rgba :: proc(
+	src:    []u8,
+	w, h:   int,
+	rotate: int,
+	flip_h, flip_v: bool,
+	allocator := context.allocator,
+) -> (out: []u8, ow: int, oh: int) {
+	if rotate == 0 && !flip_h && !flip_v {
+		return src, w, h
+	}
+	rotated := rotate == 1 || rotate == 3
+	ow = rotated ? h : w
+	oh = rotated ? w : h
+	out = make([]u8, len(src), allocator)
+	for dy in 0 ..< oh {
+		dv := (f32(dy) + 0.5) / f32(oh)
+		for dx in 0 ..< ow {
+			u, v := (f32(dx) + 0.5) / f32(ow), dv
+			switch rotate {
+			case 1: u, v = v, 1 - u
+			case 2: u, v = 1 - u, 1 - v
+			case 3: u, v = 1 - v, u
+			case:
+			}
+			if flip_h do u = 1 - u
+			if flip_v do v = 1 - v
+			ix := clamp(int(u * f32(w)), 0, w - 1)
+			iy := clamp(int(v * f32(h)), 0, h - 1)
+			si := (iy * w + ix) * 4
+			di := (dy * ow + dx) * 4
+			out[di] = src[si]
+			out[di + 1] = src[si + 1]
+			out[di + 2] = src[si + 2]
+			out[di + 3] = src[si + 3]
+		}
+	}
+	return out, ow, oh
 }

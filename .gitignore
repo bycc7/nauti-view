@@ -7,6 +7,13 @@
 *.pdb
 *.obj
 *.tmp
+# macOS / local build artifacts
+nautilus
+src.bin
+src.bin.dSYM/
+gen_tmp
+synth_series/
+gen_corpus_tmp.odin
 
 # SDD workspace
 #.ryugi/sdd/

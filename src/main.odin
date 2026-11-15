@@ -51,16 +51,22 @@ view :: proc(s: App_State, ctx: ^rl.Ctx(Msg)) -> rl.View {
 
 	ensure_cjk_font(ctx.renderer)
 
-	payload := new(Viewport_Payload, context.temp_allocator)
-	payload^ = Viewport_Payload{
-		state = View_State{
-			status = s.status,
-			path = s.path,
-			vp = s.vp,
-			frame = s.frame,
-		},
-		input = ctx.input^,
-		theme = th,
+	// Each panel and each Quad row must claim its share with flex:
+	// intrinsic-sized children leave the row's claimed space unused (the
+	// canvases would sit at their minimum size instead of filling).
+	c0 := rl.flex(1, vp_canvas(ctx, s, 0))
+	grid := c0
+	if s.layout == .Two {
+		grid = rl.row(c0, rl.flex(1, vp_canvas(ctx, s, 1)),
+			width = 0, height = 0, cross_align = .Stretch)
+	} else if s.layout == .Quad {
+		grid = rl.col(
+			rl.flex(1, rl.row(c0, rl.flex(1, vp_canvas(ctx, s, 1)),
+				width = 0, height = 0, cross_align = .Stretch)),
+			rl.flex(1, rl.row(rl.flex(1, vp_canvas(ctx, s, 2)), rl.flex(1, vp_canvas(ctx, s, 3)),
+				width = 0, height = 0, cross_align = .Stretch)),
+			width = 0, height = 0, cross_align = .Stretch,
+		)
 	}
 
 	// Pool results arrive asynchronously and do not create Msgs, so a
@@ -70,26 +76,39 @@ view :: proc(s: App_State, ctx: ^rl.Ctx(Msg)) -> rl.View {
 		rl.send(ctx, Msg{kind = .Pool_Drained})
 	}
 
-	// Wheel over the image pages the series (M2).
-	if s.status == .Ready && ctx.input.scroll.y != 0 {
-		rl.send(ctx, ctx.input.scroll.y < 0 ? Msg{kind = .Page_Next} : Msg{kind = .Page_Prev})
+	// Panel routing: the painters stamp which panel the pointer is over
+	// (and last pressed); view owns the Msg channel. A press activates
+	// that panel, and the wheel pages the hovered panel's own series.
+	if vp_pressed >= 0 {
+		rl.send(ctx, Msg{kind = .Set_Active_Vp, vp = vp_pressed})
+		vp_pressed = -1
 	}
+	if ctx.input.scroll.y != 0 && vp_hover >= 0 {
+		dir := ctx.input.scroll.y < 0 ? Msg_Kind.Page_Next : Msg_Kind.Page_Prev
+		rl.send(ctx, Msg{kind = dir, vp = vp_hover})
+		rl.send(ctx, Msg{kind = .Set_Active_Vp, vp = vp_hover})
+	}
+	vp_hover = -1 // painters re-stamp it during this frame's draw
 
-	viewport := rl.flex(1, rl.canvas(ctx, payload, paint_viewport, min_w = 320, min_h = 240))
+	viewport := rl.flex(1, grid)
 
 	// Root stack must span the whole window: `width`/`height` 0 means
 	// "intrinsic", which collapses to the canvas's min size.
-	body := rl.row(
-		sidebar(ctx, s),
-		viewport,
-		inspector(ctx, s),
+	panels: [dynamic]rl.View
+	append(&panels, sidebar(ctx, s))
+	append(&panels, viewport)
+	if s.inspector.open {
+		append(&panels, inspector(ctx, s))
+	}
+	body := rl.row(..panels[:],
 		width = 0,
 		height = 0,
 		cross_align = .Stretch,
 		spacing = th.spacing.sm,
 	)
+	toolbar_state := s // params are not addressable; topbar wants a pointer
 	return rl.col(
-		topbar(ctx, s),
+		topbar(ctx, &toolbar_state),
 		rl.flex(1, body),
 		status_bar(ctx, s),
 		width = 0,
@@ -97,6 +116,26 @@ view :: proc(s: App_State, ctx: ^rl.Ctx(Msg)) -> rl.View {
 		padding = th.spacing.sm,
 		cross_align = .Stretch,
 	)
+}
+
+// vp_canvas builds one viewport panel of the layout grid. Every
+// viewport shows the loaded frame with its own transform state; the
+// active one is flagged so the painter can outline it.
+vp_canvas :: proc(ctx: ^rl.Ctx(Msg), s: App_State, i: int) -> rl.View {
+	payload := new(Viewport_Payload, context.temp_allocator)
+	payload^ = Viewport_Payload{
+		state = View_State{
+			status = s.status,
+			path = s.path,
+			vp = s.viewports[i],
+			frame = s.vframes[i],
+			index = i,
+			active = i == s.active_vp,
+		},
+		input = ctx.input^,
+		theme = ctx.theme,
+	}
+	return rl.canvas(ctx, payload, paint_viewport, min_w = 160, min_h = 120)
 }
 
 // status_bar is the bottom diagnostic line: path, geometry, W/L, probe.
@@ -201,8 +240,17 @@ ensure_cjk_font :: proc(renderer: ^rl.Renderer) {
 	cjk_ready = true
 
 	// simhei.ttf first: msyh.ttc is a collection whose face 0 has no Han
-	// glyphs, and AddFontMem cannot select a face index.
-	for path in ([]string{"C:/Windows/Fonts/simhei.ttf", "C:/Windows/Fonts/msyh.ttc"}) {
+	// glyphs, and AddFontMem cannot select a face index. The same rule
+	// orders the macOS candidates: single-face Arial Unicode before the
+	// .ttc system fonts (Hiragino Sans GB / STHeiti), whose face 0 also
+	// cannot be selected.
+	for path in ([]string{
+		"C:/Windows/Fonts/simhei.ttf",
+		"C:/Windows/Fonts/msyh.ttc",
+		"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+		"/System/Library/Fonts/Hiragino Sans GB.ttc",
+		"/System/Library/Fonts/STHeiti Light.ttc",
+	}) {
 		data, rerr := os.read_entire_file(path, context.allocator)
 		if rerr != nil do continue
 		cjk_ttf = data

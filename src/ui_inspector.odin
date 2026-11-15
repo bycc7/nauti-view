@@ -25,8 +25,8 @@ MAX_TAG_VALUE_CHARS :: 64
 
 // extract_tag_rows lists the document's root elements as displayable
 // rows. Text VRs are shown verbatim (ellipsised); binary VRs as
-// "<N bytes>". Strings point into `doc`; the rows themselves are
-// allocated from `allocator`.
+// "<N bytes>". The rows and every string they own are allocated from
+// `allocator`: the document (and its mmap) dies when the caller is done.
 extract_tag_rows :: proc(doc: ^d.Document, allocator := context.allocator) -> []Tag_Row {
 	elems := d.document_root(doc)
 	rows := make([]Tag_Row, len(elems), allocator)
@@ -44,11 +44,16 @@ extract_tag_rows :: proc(doc: ^d.Document, allocator := context.allocator) -> []
 			value = fmt.tprintf("<%d bytes, encapsulated>", e.length)
 		} else {
 			raw := d.document_value(doc, e)
-			text := d.value_text(doc, e)
+			// Charset-aware: GB18030 names must arrive as UTF-8, and the
+			// truncation below must not split a rune (both produced
+			// mojibake in the tag table).
+			text := text_utf8(doc, e)
 			if text != "" {
-				value = strings.trim_right(text, "\x00 ")
+				value = text
 				if len(value) > MAX_TAG_VALUE_CHARS {
-					value = fmt.tprintf("%s…", value[:MAX_TAG_VALUE_CHARS])
+					cut := MAX_TAG_VALUE_CHARS
+					for cut > 0 && (value[cut] & 0xC0) == 0x80 do cut -= 1
+					value = fmt.tprintf("%s…", value[:cut])
 				}
 			} else {
 				value = fmt.tprintf("<%d bytes>", len(raw))
@@ -58,10 +63,10 @@ extract_tag_rows :: proc(doc: ^d.Document, allocator := context.allocator) -> []
 		// that points into its mmap must be cloned.
 		rows[n] = Tag_Row{
 			tag = d.tag_to_u32(e.tag),
-			keyword = strings.clone(kw),
-			vr = fmt.tprintf("%v", e.vr),
+			keyword = strings.clone(kw, allocator),
+			vr = fmt.aprintf("%v", e.vr, allocator = allocator),
 			length = e.length,
-			value = strings.clone(value),
+			value = strings.clone(value, allocator),
 		}
 		n += 1
 	}
@@ -132,7 +137,10 @@ inspect_file_diagnostic :: proc(path: string, allocator := context.allocator) ->
 		diag.note = fmt.aprintf("open: %v", diag.open_err, allocator = allocator)
 		return
 	}
-	diag.transfer_syntax = doc.ts.uid
+	// doc.ts.uid is a slice borrowed from the parse buffer, and the
+	// buffer is released by document_reset below — clone it so the
+	// diagnostic outlives the document.
+	diag.transfer_syntax = strings.clone(doc.ts.uid, allocator)
 	diag.has_preamble = doc.meta.has_preamble
 
 	// The early stop leaves PixelData itself unparsed; reparse fully for
@@ -171,8 +179,16 @@ inspect_file_diagnostic :: proc(path: string, allocator := context.allocator) ->
 // ---------------------------------------------------------------------------
 // panel state + view
 
+// Inspector_Tab picks which substrip of the right panel is shown: the
+// four-column DICOM tag table or the structured decode diagnostics.
+Inspector_Tab :: enum u8 {
+	Tags,
+	Diagnostics,
+}
+
 Inspector_State :: struct {
 	open:    bool,
+	active_tab: Inspector_Tab, // g4-a: DICOM Tags | 解码诊断
 	query:   string, // owned
 	rows:    []Tag_Row, // owned by App_State.inspector_rows
 	filtered: []int,
@@ -190,8 +206,13 @@ inspector_free_rows :: proc(s: ^App_State) {
 	}
 	if s.inspector.rows != nil do delete(s.inspector.rows)
 	if s.inspector.filtered != nil do delete(s.inspector.filtered)
+	if s.inspector.has_diag {
+		if s.inspector.diag.transfer_syntax != "" do delete(s.inspector.diag.transfer_syntax)
+		s.inspector.diag = {}
+	}
 	s.inspector.rows = nil
 	s.inspector.filtered = nil
+	s.inspector.has_diag = false
 }
 
 // inspector_load_for rebuilds the tag list for `path`. Called when the
@@ -216,8 +237,7 @@ inspector_load_for :: proc(s: ^App_State, path: string) {
 inspector :: proc(ctx: ^rl.Ctx(Msg), s: App_State) -> rl.View {
 	th := ctx.theme
 	if !s.inspector.open {
-		// Collapsed: no placeholder text, but the column keeps its width.
-		return rl.col(width = 300)
+		return rl.col(width = 0)
 	}
 
 	snap := new(Inspector_Snapshot, context.temp_allocator)
@@ -235,31 +255,100 @@ inspector :: proc(ctx: ^rl.Ctx(Msg), s: App_State) -> rl.View {
 		query = s.inspector.query,
 	}
 
-	header := rl.row(
-		rl.text("Tags", th.color.primary, th.font.size_xs),
-		rl.text("  诊断", th.color.fg_muted, th.font.size_xs),
-		rl.flex(1, rl.spacer(0)),
-		rl.text(fmt.tprintf("%d", len(snap.filtered)), th.color.fg_muted, th.font.size_xs),
-		width = 0,
-		height = 28,
-		padding = th.spacing.sm,
-		cross_align = .Center,
-	)
+	tabs := inspector_tabs(ctx, s.inspector.active_tab)
 
-	list := rl.virtual_list(ctx, snap, len(snap.filtered), 22, {300, 0},
-		inspector_row_view,
-		proc(st: ^Inspector_Snapshot, i: int) -> u64 { return u64(i) },
-		overscan = 8,
-	)
+	body := rl.col(width = 0, height = 0, cross_align = .Stretch)
+	if s.inspector.active_tab == .Tags {
+		body = rl.col(
+			rl.flex(1, rl.virtual_list(ctx, snap, len(snap.filtered), 22, {300, 0},
+				inspector_row_view,
+				proc(st: ^Inspector_Snapshot, i: int) -> u64 { return u64(i) },
+				overscan = 8,
+			)),
+			width = 0,
+			height = 0,
+			cross_align = .Stretch,
+		)
+	} else {
+		// g4-a decode-diagnostics tab: summary grid + timing + fragments.
+		body = diagnostic_body(ctx, snap)
+	}
 
 	return rl.col(
-		header,
-		diagnostic_summary(ctx, snap),
-		rl.flex(1, list),
+		tabs,
+		rl.flex(1, body),
 		width = 300,
 		height = 0,
 		cross_align = .Stretch,
 	)
+}
+
+// inspector_tabs is the g4-a tab strip (DICOM Tags | 解码诊断). Each tab
+// is clickable and emits Set_Inspector_Tab; the active tab is in fight
+// primary text.
+inspector_tabs :: proc(ctx: ^rl.Ctx(Msg), active: Inspector_Tab) -> rl.View {
+	th := ctx.theme
+	tab := proc(ctx: ^rl.Ctx(Msg), label: string, idx: int, active: bool) -> rl.View {
+		t := ctx.theme
+		c := active ? t.color.primary : t.color.fg
+		// Active tab is a filled pill — no stacked child rects, which
+		// clipped the CJK glyphs. The fill and label share one cell so
+		// the Chinese renders at natural baseline.
+		cell := rl.col(
+			rl.text(label, c, t.font.size_xs),
+			width = 0,
+			height = 24,
+			padding = 8,
+			bg = active ? t.color.surface : t.color.bg,
+			cross_align = .Center,
+		)
+		return rl.clickable(ctx, cell, Msg{kind = .Set_Inspector_Tab, row = idx})
+	}
+	return rl.row(
+		tab(ctx, "DICOM Tags", int(Inspector_Tab.Tags), active == .Tags),
+		tab(ctx, "解码诊断", int(Inspector_Tab.Diagnostics), active == .Diagnostics),
+		rl.flex(1, rl.spacer(0)),
+		width = 0,
+		height = 28,
+		padding = th.spacing.sm,
+		spacing = th.spacing.sm,
+		cross_align = .Center,
+	)
+}
+
+// diagnostic_body renders the g4-a 解码诊断 tab: the summary grid, then
+// the timing waterfall and encoding / fragment breakdown.
+diagnostic_body :: proc(ctx: ^rl.Ctx(Msg), st: ^Inspector_Snapshot) -> rl.View {
+	th := ctx.theme
+	grid := diagnostic_summary(ctx, st)
+	meta := diagnostic_meta(ctx, st)
+	return rl.col(
+		grid,
+		meta,
+		rl.flex(1, rl.spacer(0)),
+		width = 0,
+		height = 0,
+		cross_align = .Stretch,
+	)
+}
+
+// diagnostic_meta is a placeholder for the deeper diagnostic breakdown
+// (timing waterfall + fragment table, emitted fully once odin-dcm reports
+// the per-stage numbers). Kept simple for now to keep the tab switchable.
+diagnostic_meta :: proc(ctx: ^rl.Ctx(Msg), st: ^Inspector_Snapshot) -> rl.View {
+	th := ctx.theme
+	if !st.has_diag {
+		return rl.col(width = 0, height = 0)
+	}
+	row := rl.row(
+		rl.text("TS:", th.color.fg_muted, th.font.size_xs),
+		rl.text(st.diag.transfer_syntax, th.color.fg, th.font.size_xs),
+		rl.text("   frags:", th.color.fg_muted, th.font.size_xs),
+		rl.text(fmt.tprintf("%d", st.diag.fragments), th.color.fg, th.font.size_xs),
+		width = 0,
+		cross_align = .Center,
+	)
+	return rl.col(row, width = 0, padding = th.spacing.sm, cross_align = .Stretch)
 }
 
 Inspector_Snapshot :: struct {

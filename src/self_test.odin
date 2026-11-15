@@ -86,17 +86,28 @@ free_frame :: proc(f: ^Cached_Frame) {
 	free(f)
 }
 
+// base_name drops the directory prefix without truncating the file name.
+@(private)
+base_name :: proc(path: string) -> string {
+	for i := len(path) - 1; i >= 0; i -= 1 {
+		if path[i] == '/' || path[i] == '\\' do return path[i + 1:]
+	}
+	return path
+}
+
+// MAX_SHORT_NAME_BYTES bounds the tail the status bar shows. The cut is
+// snapped forward to a UTF-8 rune start: slicing mid-sequence renders
+// mojibake (Chinese file names hit this).
+@(private)
+MAX_SHORT_NAME_BYTES :: 46
+
 @(private)
 short_name :: proc(path: string) -> string {
-	base := path
-	for i := len(path) - 1; i >= 0; i -= 1 {
-		if path[i] == '/' || path[i] == '\\' {
-			base = path[i + 1:]
-			break
-		}
-	}
-	if len(base) > 46 do return base[len(base) - 46:]
-	return base
+	base := base_name(path)
+	if len(base) <= MAX_SHORT_NAME_BYTES do return base
+	cut := len(base) - MAX_SHORT_NAME_BYTES
+	for cut < len(base) && (base[cut] & 0xC0) == 0x80 do cut += 1
+	return base[cut:]
 }
 
 @(private)

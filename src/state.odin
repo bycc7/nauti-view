@@ -68,9 +68,9 @@ App_State :: struct {
 	frame: ^Cached_Frame, // borrowed from `cache`
 	info:  d.Pixel_Info,
 
-	vp: Viewport_Window,
 
 	status_text: string,
+	vframes: [MAX_VIEWPORTS]^Cached_Frame, // per-panel display frame (borrowed from cache)
 
 	// cache owns every decoded frame for the session.
 	cache: Frame_Cache,
@@ -87,8 +87,9 @@ App_State :: struct {
 	has_tree: bool,
 	rows: []Sidebar_Row,
 	selected_row: int,
-	// expanded holds the series UIDs whose frame list is open in the tree.
-	expanded: map[string]bool,
+	// expanded holds the series cards whose frame list is open in the tree.
+	// Keyed by scan-scoped indices and cleared on every new scan.
+	expanded: map[Series_Key]bool,
 
 	// Multi-viewport layout and the per-viewport paging state.
 	layout: View_Layout,
@@ -116,8 +117,21 @@ App_State :: struct {
 	pool_ready: bool,
 }
 
+// vp_active returns the window/transform state the toolbar, keyboard,
+// and pointer act on: the active viewport of the current layout.
+vp_active :: proc(s: ^App_State) -> ^Viewport_Window {
+	return &s.viewports[s.active_vp]
+}
+
+// vp_tex_names are the fixed GPU texture keys, one per viewport slot.
+vp_tex_names := [MAX_VIEWPORTS]string{
+	"nautilus://vp/0/full", "nautilus://vp/1/full",
+	"nautilus://vp/2/full", "nautilus://vp/3/full",
+}
+
 Load_Result :: struct {
 	gen:     u64,
+	vp:      int,
 	frame:   ^Cached_Frame,
 	err:     string,
 	open_ms: f64,

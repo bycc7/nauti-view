@@ -21,7 +21,7 @@ tbtn :: proc(ctx: ^rl.Ctx(Msg), label: string, m: Msg, active: bool = false) -> 
 	return rl.clickable(ctx, body, m)
 }
 
-topbar :: proc(ctx: ^rl.Ctx(Msg), s: App_State) -> rl.View {
+topbar :: proc(ctx: ^rl.Ctx(Msg), s: ^App_State) -> rl.View {
 	th := ctx.theme
 	layout_label := "1x1"
 	switch s.layout {
@@ -32,16 +32,16 @@ topbar :: proc(ctx: ^rl.Ctx(Msg), s: App_State) -> rl.View {
 
 	return rl.row(
 		rl.text("NAUTILUS", th.color.fg, th.font.size_sm),
-		tbtn(ctx, "打开文件 ^O", Msg{kind = .Open_Dialog}),
-		tbtn(ctx, "打开目录 ^D", Msg{kind = .Open_Directory}),
+		tbtn(ctx, "打开文件", Msg{kind = .Open_Dialog}),
+		tbtn(ctx, "打开目录", Msg{kind = .Open_Directory}),
 		tbtn(ctx, fmt.tprintf("布局 %s", layout_label), Msg{kind = .Layout_Cycle}),
-		tbtn(ctx, "反相 I", Msg{kind = .Invert}, s.vp.window.invert),
-		tbtn(ctx, "翻转 H", Msg{kind = .Flip_H}, s.vp.flip_h),
-		tbtn(ctx, "翻转 V", Msg{kind = .Flip_V}, s.vp.flip_v),
-		tbtn(ctx, "旋转 R", Msg{kind = .Rotate}),
-		tbtn(ctx, "重置 0", Msg{kind = .Reset_Window}),
+		tbtn(ctx, "反相", Msg{kind = .Invert}, vp_active(s).window.invert),
+		tbtn(ctx, "翻转 H", Msg{kind = .Flip_H}, vp_active(s).flip_h),
+		tbtn(ctx, "翻转 V", Msg{kind = .Flip_V}, vp_active(s).flip_v),
+		tbtn(ctx, "旋转", Msg{kind = .Rotate}),
+		tbtn(ctx, "重置", Msg{kind = .Reset_Window}),
 		rl.flex(1, rl.spacer(0)),
-		tbtn(ctx, "标签面板 ^I", Msg{kind = .Toggle_Inspector}, s.inspector.open),
+		tbtn(ctx, "标签面板", Msg{kind = .Toggle_Inspector}, s.inspector.open),
 		width = 0,
 		height = 40,
 		padding = th.spacing.sm,

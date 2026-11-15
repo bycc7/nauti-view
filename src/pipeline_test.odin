@@ -6,7 +6,7 @@ package nautilus
 
 import "core:testing"
 import d "../vendor/dicom"
-
+import rl "../vendor/skald"
 @(test)
 lut_matches_render_gray8 :: proc(t: ^testing.T) {
 	// 16-bit signed, 12 bits stored, rescale on, MONOCHROME1 invert,
@@ -91,4 +91,96 @@ lut_auto_window_from_frame_stats :: proc(t: ^testing.T) {
 	testing.expect_value(t, c, 105.0)
 	testing.expect_value(t, w, 191.0)
 	testing.expect(t, rgba[0] <= 1 && rgba[15 * 4] >= 254, "min/max near endpoints")
+}
+
+@(test)
+reset_restores_default_viewport_state :: proc(t: ^testing.T) {
+	// “重置” means back to the frame's initial display state — the same
+	// defaults install_result lays down. It must undo rotate / flips /
+	// zoom / pan as well as any window/level drag, not just the window.
+	s: App_State
+	s.status = .Ready
+	s.viewports[0] = Viewport_Window{
+		flip_h = true, flip_v = true, rotate = 2,
+		zoom = 3, pan = {10, 20}, has_tex = true,
+		window = {center = 500, width = 50, valid_window = true},
+		default_window = {center = 40, width = 400, valid_window = true},
+	}
+	s.active_vp = 0
+	window_apply_preset(&s, .Reset)
+	vp := &s.viewports[0]
+	testing.expect(t, !vp.flip_h && !vp.flip_v, "flips restored")
+	testing.expect_value(t, vp.rotate, 0)
+	testing.expect_value(t, vp.zoom, 1)
+	testing.expect_value(t, vp.pan, [2]f32{0, 0})
+	testing.expect_value(t, vp.window.center, 40.0)
+	testing.expect_value(t, vp.window.width, 400.0)
+	testing.expect_value(t, vp.has_tex, false)
+}
+
+@(test)
+inspector_tab_switch_updates_active_tab :: proc(t: ^testing.T) {
+	// g4-a: the right pane's tab strip must actually switch which
+	// substrip is shown. Set_Inspector_Tab drives Inspector_State.active
+	// via update; a bogus index is rejected.
+	s: App_State
+	s.inspector.open = true
+	s.inspector.active_tab = .Tags
+
+	s2, _ := update(s, Msg{kind = .Set_Inspector_Tab, row = int(Inspector_Tab.Diagnostics)})
+	testing.expect_value(t, s2.inspector.active_tab, Inspector_Tab.Diagnostics)
+
+	s3, _ := update(s2, Msg{kind = .Set_Inspector_Tab, row = int(Inspector_Tab.Tags)})
+	testing.expect_value(t, s3.inspector.active_tab, Inspector_Tab.Tags)
+
+	// Out-of-range must not clobber the active tab.
+	s4, _ := update(s3, Msg{kind = .Set_Inspector_Tab, row = 99})
+	testing.expect_value(t, s4.inspector.active_tab, Inspector_Tab.Tags)
+}
+
+@(test)
+orient_rgba_agrees_with_pointer_mapping :: proc(t: ^testing.T) {
+	// The painter uploads an oriented texture; canvas_point_to_image is
+	// the contract the probe and measurement math already assumes. Every
+	// displayed pixel of orient_rgba's output must be the source pixel
+	// the pointer map reports at that position, across all 16
+	// orientation combinations, on a non-square image so a silent
+	// transpose error cannot pass.
+	w, h := 4, 3
+	src := make([]u8, w * h * 4)
+	defer delete(src)
+	for i in 0 ..< w * h {
+		src[i * 4] = u8(i) // unique gray per source pixel
+		src[i * 4 + 3] = 255
+	}
+
+	bools := []bool{false, true}
+	for rotate in 0 ..< 4 {
+		for fh in bools {
+			for fv in bools {
+				out, ow, oh := orient_rgba(src, w, h, rotate, fh, fv, context.temp_allocator)
+				testing.expectf(t, ow == (rotate % 2 == 1 ? h : w) && oh == (rotate % 2 == 1 ? w : h),
+					"rotate %d fh %v fv %v: got %dx%d", rotate, fh, fv, ow, oh)
+
+				vp := Viewport_Window{img_w = w, img_h = h, rotate = rotate, flip_h = fh, flip_v = fv, zoom = 1}
+				// Exact-aspect bounds: the contain fit is the identity.
+				bounds := rl.Rect{x = 0, y = 0, w = f32(ow) * 10, h = f32(oh) * 10}
+				for dy in 0 ..< oh {
+					for dx in 0 ..< ow {
+						pt := [2]f32{(f32(dx) + 0.5) * 10, (f32(dy) + 0.5) * 10}
+						ix, iy, ok := canvas_point_to_image(&vp, bounds, pt)
+						testing.expectf(t, ok, "rotate %d fh %v fv %v: (%d,%d) outside", rotate, fh, fv, dx, dy)
+						if !ok do continue
+						want := src[(iy * w + ix) * 4]
+						got := out[(dy * ow + dx) * 4]
+						testing.expectf(t, got == want,
+							"rotate %d fh %v fv %v: displayed (%d,%d) is %v, pointer map says src (%d,%d) = %v",
+							rotate, fh, fv, dx, dy, got, ix, iy, want)
+						testing.expectf(t, out[(dy * ow + dx) * 4 + 3] == 255,
+							"rotate %d fh %v fv %v: alpha lost at (%d,%d)", rotate, fh, fv, dx, dy)
+					}
+				}
+			}
+		}
+	}
 }

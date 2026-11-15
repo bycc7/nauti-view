@@ -92,9 +92,12 @@ frame_cache_single_frame_over_budget_is_rejected :: proc(t: ^testing.T) {
 	defer frame_cache_destroy(&c)
 
 	// A 32 MB frame can never fit; the cache must refuse rather than
-	// thrash the existing entries to empty.
+	// thrash the existing entries to empty. A rejected put keeps the
+	// caller's ownership, so the oversized payload is freed here.
+	huge := frame_of_size(32 * 1024 * 1024)
+	defer delete(huge)
 	frame_cache_put(&c, &Cached_Frame{key = Frame_Key{file = "small.dcm", frame = 0}, raw = frame_of_size(4 * 1024 * 1024)})
-	frame_cache_put(&c, &Cached_Frame{key = Frame_Key{file = "huge.dcm", frame = 0}, raw = frame_of_size(32 * 1024 * 1024)})
+	frame_cache_put(&c, &Cached_Frame{key = Frame_Key{file = "huge.dcm", frame = 0}, raw = huge})
 	testing.expect(t, frame_cache_get(&c, Frame_Key{file = "huge.dcm", frame = 0}) == nil)
 	testing.expect(t, frame_cache_get(&c, Frame_Key{file = "small.dcm", frame = 0}) != nil,
 		"existing entry survives an oversized put")

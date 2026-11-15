@@ -26,6 +26,8 @@ Decode_Request :: struct {
 	// generation lets a caller discard results from a superseded request
 	// batch (e.g. the user jumped to another series).
 	generation: u64,
+	// viewport routes the finished frame to the panel that asked for it.
+	viewport: int,
 }
 
 @(private)
@@ -153,7 +155,7 @@ decode_worker_run :: proc(data: rawptr) {
 			}
 			frame = owned
 		}
-		res := Load_Result{gen = job.req.generation, frame = frame, err = err}
+		res := Load_Result{gen = job.req.generation, vp = job.req.viewport, frame = frame, err = err}
 		sync.lock(&p.done_lock)
 		slot := (p.done_head + p.done_len) % DECODE_POOL_DONE_CAPACITY
 		p.done[slot] = res

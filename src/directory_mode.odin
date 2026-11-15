@@ -88,14 +88,13 @@ install_scan :: proc(s: ^App_State) -> bool {
 	}
 	s.tree = tree
 	s.has_tree = true
-	if s.expanded == nil do s.expanded = make(map[string]bool)
+	if s.expanded == nil do s.expanded = make(map[Series_Key]bool)
+	clear(&s.expanded) // indices are scan-scoped
 	s.rows = sidebar_build_rows(&s.tree, &s.expanded)
 	s.selected_row = 0
-	if len(s.tree.studies) > 0 && len(s.tree.studies[0].series) > 0 {
-		ser := &s.tree.studies[0].series[0]
-		s.flips[s.active_vp] = flip_init(ser.frames)
-		if len(ser.frames) > 0 do show_entry(s, ser.frames[0])
-	}
+	// Panels follow the series list order; slot 0 is the first series.
+	assign_slots(s, &s.tree)
+	for vp in 0 ..< layout_count(s.layout) do show_slot(s, vp)
 
 	set_status(s, fmt.aprintf("%d files, %d studies, %d series",
 		len(s.tree.entries), len(s.tree.studies), count_series(&s.tree)))
@@ -119,42 +118,121 @@ select_row :: proc(s: ^App_State, row: int) {
 
 	switch r.kind {
 	case .Frame:
+		// A frame row can belong to a series other than the one currently
+		// bound to this panel; rebind so the wheel continues in that series.
+		entry := s.tree.entries[r.entry]
+		ser := &s.tree.studies[entry.study].series[entry.series]
+		s.flips[s.active_vp] = flip_init(ser.frames)
+		s.flips[s.active_vp].cursor = entry.pos
 		show_entry(s, r.entry)
 	case .Series:
+		// Select and show the series at its own cursor. Expansion belongs
+		// to the chevron (toggle_series): a click must not destroy the
+		// frame list the user is reading, nor force a decode on collapse.
 		series := &s.tree.studies[r.study].series[r.series]
-		// Clicking a series card selects its first frame and toggles the
-		// frame list; rebuild rows because the flat list changed.
-		if len(series.frames) > 0 do show_entry(s, series.frames[0])
+		if len(series.frames) == 0 do return
+		pos := clamp(series.cursor, 0, len(series.frames) - 1)
 		s.flips[s.active_vp] = flip_init(series.frames)
-		s.expanded[series.uid] = !s.expanded[series.uid]
-		sidebar_destroy_rows(s.rows)
-		s.rows = sidebar_build_rows(&s.tree, &s.expanded)
+		s.flips[s.active_vp].cursor = pos
+		show_entry(s, series.frames[pos])
 	case .Study:
 		study := &s.tree.studies[r.study]
-		if len(study.series) > 0 && len(study.series[0].frames) > 0 {
-			show_entry(s, study.series[0].frames[0])
-		}
+		if len(study.series) == 0 || len(study.series[0].frames) == 0 do return
+		ser := &study.series[0]
+		pos := clamp(ser.cursor, 0, len(ser.frames) - 1)
+		s.flips[s.active_vp] = flip_init(ser.frames)
+		s.flips[s.active_vp].cursor = pos
+		show_entry(s, ser.frames[pos])
+	case .Patient:
+		patient := &s.tree.patients[r.patient]
+		if len(patient.studies) == 0 do return
+		study := &s.tree.studies[patient.studies[0]]
+		if len(study.series) == 0 || len(study.series[0].frames) == 0 do return
+		ser := &study.series[0]
+		pos := clamp(ser.cursor, 0, len(ser.frames) - 1)
+		s.flips[s.active_vp] = flip_init(ser.frames)
+		s.flips[s.active_vp].cursor = pos
+		show_entry(s, ser.frames[pos])
 	}
 }
 
-// show_entry starts a decode for the frame at `entry`, through the pool
-// show_entry displays `entry` immediately on cache hit, or dispatches
-// a .Current decode plus directional .Prefetch requests through the pool.
+// toggle_series opens or closes one series card without changing the
+// displayed frame or the panel bindings.
+toggle_series :: proc(s: ^App_State, row: int) {
+	if !s.has_tree || row < 0 || row >= len(s.rows) do return
+	r := s.rows[row]
+	if r.kind != .Series do return
+
+	if s.expanded == nil do s.expanded = make(map[Series_Key]bool)
+	key := Series_Key{study = r.study, series = r.series}
+	s.expanded[key] = !s.expanded[key]
+
+	// Inserting or removing the frame block reindexes every later row, so
+	// re-find the selected item by identity instead of keeping the index.
+	ident := row_ident(s.rows[clamp(s.selected_row, 0, len(s.rows) - 1)])
+	sidebar_destroy_rows(s.rows)
+	s.rows = sidebar_build_rows(&s.tree, &s.expanded)
+	next := find_row(s.rows, ident)
+	if next < 0 do next = min(row, len(s.rows) - 1)
+	s.selected_row = next
+}
+
+// assign_slots binds each layout panel to a series in sidebar (tree)
+// order: panel 0 shows the first series, panel 1 the second, and panels
+// beyond the series count stay empty. `tree` outlives the flips — the
+// frame lists are borrowed, not copied.
+assign_slots :: proc(s: ^App_State, tree: ^Study_Tree) {
+	n := 0
+	total := layout_count(s.layout)
+	outer: for si in 0 ..< len(tree.studies) {
+		for ni in 0 ..< len(tree.studies[si].series) {
+			if n >= total do break outer
+			ser := &tree.studies[si].series[ni]
+			s.flips[n] = flip_init(ser.frames)
+			if len(ser.frames) > 0 {
+				s.flips[n].cursor = clamp(ser.cursor, 0, len(ser.frames) - 1)
+			}
+			n += 1
+		}
+	}
+	for i in n ..< MAX_VIEWPORTS {
+		s.flips[i] = Flip_State{}
+	}
+}
+
+// show_slot kicks the current frame of a filled slot onto its panel;
+// an empty slot clears the panel.
+show_slot :: proc(s: ^App_State, vp: int) {
+	if e, ok := flip_current(&s.flips[vp]); ok {
+		show_entry_in(s, e, vp)
+	} else {
+		s.vframes[vp] = nil
+	}
+}
+
+// show_entry_in displays `entry` on viewport `vp` immediately on cache
+// hit, or dispatches a .Current decode plus directional .Prefetch
+// requests through the pool. show_entry targets the active viewport.
 show_entry :: proc(s: ^App_State, entry: u32) {
-	fmt.eprintfln("SHOW entry=%d pool=%v has_tree=%v", entry, s.pool_ready, s.has_tree)
+	show_entry_in(s, entry, s.active_vp)
+}
+
+show_entry_in :: proc(s: ^App_State, entry: u32, vp: int) {
+	fmt.eprintfln("SHOW vp=%d entry=%d pool=%v has_tree=%v", vp, entry, s.pool_ready, s.has_tree)
 	if !s.has_tree || entry >= u32(len(s.tree.entries)) do return
+	// Record where this series is now, so its card can show "36/172".
+	mark_cursor(&s.tree, entry)
 	path := s.tree.entries[entry].path
 
-	f := &s.flips[s.active_vp]
+	f := &s.flips[vp]
 	seq := f.request_seq
 	if seq == 0 do seq = 1
-	s.load_gen = seq
 
 	key := Frame_Key{file = path, frame = 0}
 	if cached := frame_cache_get(&s.cache, key); cached != nil {
-		install_cached(s, cached)
+		install_cached(s, cached, vp)
 	} else if s.pool_ready {
-		_ = decode_pool_submit(pool_ref(), {key = key, priority = .Current, generation = seq})
+		_ = decode_pool_submit(pool_ref(), {key = key, priority = .Current, generation = seq, viewport = vp})
 		set_status(s, fmt.aprintf("%s  (seq %d)", short_name(path), seq))
 	} else {
 		cmd := begin_load(s, path)
@@ -170,21 +248,21 @@ show_entry :: proc(s: ^App_State, entry: u32) {
 			pk := Frame_Key{file = s.tree.entries[pe].path, frame = 0}
 			if frame_cache_peek(&s.cache, pk) == nil {
 				// Prefetch carries generation 0 so a drain never mistakes
-				// it for the frame the viewport asked for.
-				_ = decode_pool_submit(pool_ref(), {key = pk, priority = .Prefetch, generation = 0})
+				// it for the frame a viewport asked for.
+				_ = decode_pool_submit(pool_ref(), {key = pk, priority = .Prefetch, generation = 0, viewport = vp})
 			}
 		}
 	}
 }
 
-page :: proc(s: ^App_State, dir: Flip_Direction) {
-	f := &s.flips[s.active_vp]
+// page steps the series bound to viewport `vp`.
+page :: proc(s: ^App_State, dir: Flip_Direction, vp: int) {
+	f := &s.flips[vp]
 	if len(f.frames) == 0 do return
 	entry, ok, changed := flip_step(f, dir)
 	if !ok do return
 	if changed {
-		s.load_gen = f.request_seq
-		show_entry(s, entry)
+		show_entry_in(s, entry, vp)
 	}
 }
 
@@ -195,16 +273,20 @@ cycle_layout :: proc(s: ^App_State) {
 	case .Quad: s.layout = .Single
 	}
 	s.active_vp = min(s.active_vp, layout_count(s.layout) - 1)
+	// Panels follow the series list, so a new layout re-binds them.
+	if s.has_tree {
+		assign_slots(s, &s.tree)
+		for vp in 0 ..< layout_count(s.layout) do show_slot(s, vp)
+	}
 }
 
 // drain_pool moves finished decodes into the cache, and shows one only
-// when its generation matches the active viewport's newest request.
+// on the viewport that asked, when its generation is still the newest.
 drain_pool :: proc(s: ^App_State) {
 	if !s.pool_ready do return
 	results := decode_pool_drain(pool_ref())
 	defer delete(results)
 
-	f := &s.flips[s.active_vp]
 	for r in results {
 		if r.frame == nil {
 			if r.err != "" do set_status(s, fmt.aprintf("decode failed: %s", r.err))
@@ -216,33 +298,36 @@ drain_pool :: proc(s: ^App_State) {
 			free_uncached_frame(frame)
 			continue
 		}
-		// Only the newest request may reach the viewport. `load_gen` is the
-		// page the user asked for; results from an older one stay cached.
-		if r.gen != 0 && r.gen == s.load_gen {
-			install_cached(s, frame)
+		// Only the newest request may reach its panel; stale results
+		// stay cached for the next visit.
+		vp := clamp(r.vp, 0, MAX_VIEWPORTS - 1)
+		if r.gen != 0 && flip_accept(&s.flips[vp], r.gen) {
+			install_cached(s, frame, vp)
 		}
 	}
 }
 
-// install_cached points the active viewport at a frame already in the
-// cache. The cache keeps ownership.
-install_cached :: proc(s: ^App_State, f: ^Cached_Frame) {
+// install_cached points viewport `vp` at a frame already in the cache.
+// The cache keeps ownership; panels borrow the pointer.
+install_cached :: proc(s: ^App_State, f: ^Cached_Frame, vp: int) {
+	s.vframes[vp] = f
+	vw := &s.viewports[vp]
+	vw.img_w = f.info.cols
+	vw.img_h = f.info.rows
+	vw.tex_w = u32(f.info.cols)
+	vw.tex_h = u32(f.info.rows)
+	vw.has_tex = false
+	window_reset(vw, f)
+	if vp != s.active_vp do return
 	s.frame = f
 	s.info = f.info
 	s.status = .Ready
-	s.vp.img_w = f.info.cols
-	s.vp.img_h = f.info.rows
-	s.vp.tex_w = u32(f.info.cols)
-	s.vp.tex_h = u32(f.info.rows)
-	s.vp.has_tex = false
-	window_reset(s, f)
 	// Refresh tags once per shown frame, not per UI frame: the refresh
 	// re-opens the file, which is far too expensive for the hot path.
 	// Defer the tag refresh: this runs inside the pool drain, and opening
 	// the document here races the decode workers.
 	s.inspector_needs_refresh = true
-
 	set_status(s, fmt.aprintf("%s  %dx%d  W %.0f / L %.0f",
 		short_name(f.key.file), f.info.cols, f.info.rows,
-		s.vp.window.width, s.vp.window.center))
+		vw.window.width, vw.window.center))
 }

@@ -16,6 +16,7 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:sync"
+import "core:unicode/utf8"
 import "core:thread"
 import d "../vendor/dicom"
 
@@ -25,24 +26,49 @@ TAG_SERIES_NUMBER :: d.Tag{0x0020, 0x0011}
 TAG_INSTANCE_NUMBER :: d.Tag{0x0020, 0x0013}
 TAG_MODALITY :: d.Tag{0x0008, 0x0060}
 TAG_STUDY_DATE :: d.Tag{0x0008, 0x0020}
+TAG_SERIES_DESCRIPTION :: d.Tag{0x0008, 0x103E}
+TAG_PATIENT_NAME :: d.Tag{0x0010, 0x0010}
+TAG_PATIENT_ID :: d.Tag{0x0010, 0x0020}
+TAG_ROWS :: d.Tag{0x0028, 0x0010}
+TAG_COLUMNS :: d.Tag{0x0028, 0x0011}
+TAG_BITS_ALLOCATED :: d.Tag{0x0028, 0x0100}
 
 Study_Entry :: struct {
 	path:     string, // owned
 	study:    u32, // index into Study_Tree.studies
 	series:   u32, // index into studies[study].series
 	instance: int,
+	// pos is the frame's index inside its series (0-based). The sidebar
+	// cursor and the progress bar read it; build_tree fills it last, after
+	// the per-series InstanceNumber sort has settled the order.
+	pos: int,
 }
 
 Series_Node :: struct {
 	uid:      string, // owned
+	description: string, // owned; SeriesDescription (0008,103E), may be ""
+	modality: string, // owned; per-series, not inherited from the study
 	number:   int,
+	rows:     int,
+	cols:     int,
+	bits:     int,
 	frames:   []u32, // indices into Study_Tree.entries, sorted by instance
+	// cursor is the index into `frames` currently shown for this series.
+	// Updated by mark_cursor when a viewport displays one of its frames.
+	cursor:   int,
+}
+
+Patient_Node :: struct {
+	id:   string, // owned; PatientID (0010,0020), may be ""
+	name: string, // owned; PatientName (0010,0010), may be ""
+	studies: []u32, // indices into Study_Tree.studies, date-desc order
 }
 
 Study_Node :: struct {
-	uid:    string, // owned
+	uid:    string, // owned; "" for a study without StudyInstanceUID
 	date:   string, // owned
-	modality: string,
+	modality: string, // owned; the study's first modality (header only)
+	patient: u32, // index into Study_Tree.patients
 	count:  int,
 	series: []Series_Node,
 }
@@ -50,6 +76,30 @@ Study_Node :: struct {
 Study_Tree :: struct {
 	entries: []Study_Entry,
 	studies: []Study_Node,
+	patients: []Patient_Node,
+}
+
+// Series_Key identifies one series card across row rebuilds. It is an
+// index pair, not a UID: empty or cross-study-reused UIDs must not merge
+// two cards, and the map that stores expansion is cleared on every scan.
+Series_Key :: struct {
+	study:  u32,
+	series: u32,
+}
+
+@(private)
+Patient_Key :: struct { id, name: string }
+
+@(private)
+Study_Key :: struct {
+	patient: Patient_Key,
+	uid:     string,
+}
+
+@(private)
+Series_Scan_Key :: struct {
+	study:  Study_Key,
+	series: string,
 }
 
 study_tree_destroy :: proc(t: ^Study_Tree) {
@@ -59,15 +109,36 @@ study_tree_destroy :: proc(t: ^Study_Tree) {
 	for s in t.studies {
 		if s.uid != "" do delete(s.uid)
 		if s.date != "" do delete(s.date)
+		if s.modality != "" do delete(s.modality)
 		for ser in s.series {
 			if ser.uid != "" do delete(ser.uid)
+			if ser.description != "" do delete(ser.description)
+			if ser.modality != "" do delete(ser.modality)
 			delete(ser.frames)
 		}
 		delete(s.series)
 	}
+	for p in t.patients {
+		if p.id != "" do delete(p.id)
+		if p.name != "" do delete(p.name)
+		delete(p.studies)
+	}
 	delete(t.entries)
 	delete(t.studies)
+	delete(t.patients)
 	t^ = {}
+}
+
+// mark_cursor records that `entry` is now the frame on screen, so the
+// series card can show "36/172" and its progress bar. Unknown indices are
+// ignored (a stale row from a previous scan, for instance).
+mark_cursor :: proc(t: ^Study_Tree, entry: u32) {
+	if entry >= u32(len(t.entries)) do return
+	e := t.entries[entry]
+	if e.study >= u32(len(t.studies)) do return
+	st := &t.studies[e.study]
+	if e.series >= u32(len(st.series)) do return
+	st.series[e.series].cursor = e.pos
 }
 
 // ---------------------------------------------------------------------------
@@ -83,8 +154,71 @@ Scan_Result :: struct {
 	series:   string,
 	study_date: string,
 	modality: string,
+	description: string,
+	patient_id:   string,
+	patient_name: string,
 	series_number:   int,
 	instance_number: int,
+	rows: int,
+	cols: int,
+	bits: int,
+}
+
+// trim_value strips DICOM's space/NUL padding so grouping keys and labels
+// compare and display cleanly ("CT\0" vs "CT").
+@(private)
+trim_value :: proc(s: string) -> string {
+	return strings.trim(s, " \x00\t\r\n")
+}
+
+// text_utf8 returns a text element as UTF-8. `value_text` hands back the
+// raw bytes, so a GB18030 patient name or series description would reach
+// the UI as invalid UTF-8 (mojibake). The declared charset is honoured;
+// undeclared high bytes get the common Chinese PACS treatment (GBK), and
+// truly undecodable bytes are scrubbed rather than drawn as garbage.
+text_utf8 :: proc(doc: ^d.Document, e: d.Element) -> string {
+	raw := d.document_value(doc, e)
+	if utf8.valid_string(string(raw)) do return trim_value(string(raw))
+
+	buf := make([]u8, len(raw) * 2 + 8, context.temp_allocator)
+	if n := d.text_to_utf8(doc, e, buf); n >= 0 do return trim_value(string(buf[:n]))
+	// Undeclared high bytes are GBK in practice for Chinese PACS. Only
+	// guess that when nothing else was declared; an unsupported declared
+	// charset (ISO 2022 extended sets) must not be misread as GBK.
+	charset := d.document_charset(doc)
+	if charset == .Ascii || charset == .Gb18030 {
+		if n, dok := d.gb18030_to_utf8(buf, raw); dok do return trim_value(string(buf[:n]))
+	}
+
+	out := make([]u8, len(raw), context.temp_allocator)
+	n := 0
+	for i := 0; i < len(raw); {
+		size := 1
+		b := raw[i]
+		if b >= 0xF0 {
+			size = 4
+		} else if b >= 0xE0 {
+			size = 3
+		} else if b >= 0xC0 {
+			size = 2
+		}
+		if i + size <= len(raw) && utf8.valid_string(string(raw[i:i + size])) {
+			copy(out[n:], raw[i:i + size])
+			n += size
+			i += size
+		} else {
+			out[n] = '?'
+			n += 1
+			i += 1
+		}
+	}
+	return trim_value(string(out[:n]))
+}
+
+@(private)
+read_text :: proc(doc: ^d.Document, tag: d.Tag) -> string {
+	if e, ok := d.document_find(doc, tag); ok do return text_utf8(doc, e)
+	return ""
 }
 
 @(private)
@@ -96,26 +230,33 @@ scan_one_file :: proc(doc: ^d.Document, path: string) -> Scan_Result {
 	// The parse stops *before* PixelData, so look for the image geometry
 	// that precedes it: SR / RT objects carry no Rows/Columns and have
 	// nothing to show.
-	if _, ok := d.document_find(doc, d.Tag{0x0028, 0x0010}); !ok {
+	if _, ok := d.document_find(doc, TAG_ROWS); !ok {
 		return r
 	}
-	if _, ok := d.document_find(doc, d.Tag{0x0028, 0x0011}); !ok {
+	if _, ok := d.document_find(doc, TAG_COLUMNS); !ok {
 		return r
 	}
 	read_str :: proc(doc: ^d.Document, tag: d.Tag) -> string {
-		if e, ok := d.document_find(doc, tag); ok do return d.value_text(doc, e)
-		return ""
+		return read_text(doc, tag)
+	}
+	// Rows/Columns/BitsAllocated are binary US, which `value_is` (a text
+	// parser for IS/DS) cannot read; pixel_attribute picks the right path.
+	read_int :: proc(doc: ^d.Document, tag: d.Tag) -> int {
+		if v, ok := d.pixel_attribute(doc, tag); ok do return v
+		return 0
 	}
 	r.study = strings.clone(read_str(doc, TAG_STUDY_UID))
 	r.series = strings.clone(read_str(doc, TAG_SERIES_UID))
 	r.study_date = strings.clone(read_str(doc, TAG_STUDY_DATE))
 	r.modality = strings.clone(read_str(doc, TAG_MODALITY))
-	if e, ok := d.document_find(doc, TAG_SERIES_NUMBER); ok {
-		if v, vok := d.value_is(doc, e); vok do r.series_number = v
-	}
-	if e, ok := d.document_find(doc, TAG_INSTANCE_NUMBER); ok {
-		if v, vok := d.value_is(doc, e); vok do r.instance_number = v
-	}
+	r.description = strings.clone(read_str(doc, TAG_SERIES_DESCRIPTION))
+	r.patient_id = strings.clone(read_str(doc, TAG_PATIENT_ID))
+	r.patient_name = strings.clone(read_str(doc, TAG_PATIENT_NAME))
+	r.series_number = read_int(doc, TAG_SERIES_NUMBER)
+	r.instance_number = read_int(doc, TAG_INSTANCE_NUMBER)
+	r.rows = read_int(doc, TAG_ROWS)
+	r.cols = read_int(doc, TAG_COLUMNS)
+	r.bits = read_int(doc, TAG_BITS_ALLOCATED)
 	r.ok = true
 	return r
 }
@@ -131,6 +272,9 @@ Scan_Shard :: struct {
 @(private)
 scan_shard_run :: proc(data: rawptr) {
 	s := cast(^Scan_Shard) data
+	// The shard's strings outlive the thread and are freed by the joiner:
+	// allocate them with the caller's allocator, not the thread default.
+	context.allocator = s.allocator
 	d.document_init(&s.doc, s.allocator)
 	defer d.document_destroy(&s.doc)
 	for p in s.paths {
@@ -191,6 +335,12 @@ scan_directory :: proc(root: string, allocator := context.allocator) -> Study_Tr
 	tree: Study_Tree
 	if !os.exists(root) do return tree
 
+	// Everything below — worker clones, shard output, tree nodes, and the
+	// frees on this side — must use the caller's allocator.
+	own := context.allocator
+	context.allocator = allocator
+	defer context.allocator = own
+
 	paths := collect_candidates(root, allocator)
 	defer {
 		for p in paths do delete(p)
@@ -229,7 +379,7 @@ scan_directory :: proc(root: string, allocator := context.allocator) -> Study_Tr
 		append(&results, ..shards[i].out[:])
 		delete(shards[i].out)
 	}
-	build_tree(&tree, results[:], allocator)
+	build_tree(&tree, results[:])
 
 	// Results own clones of their strings; the tree took what it needs.
 	for r in results {
@@ -238,52 +388,86 @@ scan_directory :: proc(root: string, allocator := context.allocator) -> Study_Tr
 		delete(r.series)
 		delete(r.study_date)
 		delete(r.modality)
+		delete(r.description)
+		delete(r.patient_id)
+		delete(r.patient_name)
 	}
 	return tree
 }
 
 @(private)
-build_tree :: proc(tree: ^Study_Tree, results: []Scan_Result, _alloc: runtime.Allocator) {
+build_tree :: proc(tree: ^Study_Tree, results: []Scan_Result) {
 	// Frames live outside Study_Node: a [dynamic] field copied by value
-	// inside another dynamic array loses its backing store.
-	study_index: map[string]u32
-	series_index: map[string]u32
+	// inside another dynamic array loses its backing store. Same rule for
+	// patients: study indices live in Patient_Node.studies.
+	patient_index: map[Patient_Key]u32
+	study_index: map[Study_Key]u32
+	series_index: map[Series_Scan_Key]u32
+	defer delete(patient_index)
 	defer delete(study_index)
 	defer delete(series_index)
 
+	patients: [dynamic]Patient_Node
 	studies: [dynamic]Study_Node
-	// frames[key] where key = series_index[uid]
 	// frame_counts sizes each series' frame list; nesting dynamic arrays
 	// would copy the inner header by value and lose its storage.
 	frame_counts: [dynamic]int
 	defer delete(frame_counts)
 
 	entries: [dynamic]Study_Entry
-	// study_series[j] is the running count of series seen per study, used
+	// series_cursor[si] is the running count of series seen per study, used
 	// to place each new Series_Node into its study's list.
 	series_cursor: [dynamic]int
 	defer delete(series_cursor)
+	// series_loc[gkey] is the series' (study, index-in-study) at creation
+	// time: the placement the frame fill needs before the sort moves cards.
+	series_loc: [dynamic][2]u32
+	defer delete(series_loc)
+	// study_patient keeps the patient key per study so the patient index can
+	// be remapped after the patient list is sorted.
+	study_patient: [dynamic]Patient_Key
+	defer delete(study_patient)
 
 	for r in results {
-		if r.study == "" do continue
+		pkey := Patient_Key{trim_value(r.patient_id), trim_value(r.patient_name)}
+		pi, pseen := patient_index[pkey]
+		if !pseen {
+			pi = u32(len(patients))
+			patient_index[pkey] = pi
+			append(&patients, Patient_Node{
+				id = strings.clone(pkey.id),
+				name = strings.clone(pkey.name),
+			})
+		}
 
-		si, seen := study_index[r.study]
-		if !seen {
+		// A present StudyInstanceUID always identifies one study, whatever
+		// the patient spelling says. A missing one groups per patient
+		// instead of dropping the file.
+		skey := Study_Key{uid = trim_value(r.study)}
+		if skey.uid == "" do skey.patient = pkey
+
+		si, sseen := study_index[skey]
+		if !sseen {
 			si = u32(len(studies))
-			study_index[r.study] = si
+			study_index[skey] = si
 			append(&studies, Study_Node{
-				uid = strings.clone(r.study),
+				uid = strings.clone(skey.uid),
 				date = strings.clone(r.study_date),
 				modality = strings.clone(r.modality),
+				patient = pi,
 			})
 			append(&series_cursor, 0)
+			append(&study_patient, pkey)
 		}
 		studies[si].count += 1
 
-		gkey, gseen := series_index[r.series]
+		// Series identity is (study, SeriesInstanceUID): an empty UID, or
+		// one reused by another study, must not merge two cards.
+		kkey := Series_Scan_Key{study = skey, series = trim_value(r.series)}
+		gkey, gseen := series_index[kkey]
 		if !gseen {
 			gkey = u32(len(frame_counts))
-			series_index[r.series] = gkey
+			series_index[kkey] = gkey
 			append(&frame_counts, 0)
 
 			// Grow this study's series slice and place the new node.
@@ -295,10 +479,16 @@ build_tree :: proc(tree: ^Study_Tree, results: []Scan_Result, _alloc: runtime.Al
 			}
 			studies[si].series = grown
 			studies[si].series[n] = Series_Node{
-				uid = strings.clone(r.series),
+				uid = strings.clone(kkey.series),
+				description = strings.clone(trim_value(r.description)),
+				modality = strings.clone(r.modality),
 				number = r.series_number,
+				rows = r.rows,
+				cols = r.cols,
+				bits = r.bits,
 			}
 			series_cursor[si] = n + 1
+			append(&series_loc, {si, u32(n)})
 		}
 
 		ei := u32(len(entries))
@@ -318,16 +508,9 @@ build_tree :: proc(tree: ^Study_Tree, results: []Scan_Result, _alloc: runtime.Al
 	// entries once and place each index into its owner's list.
 	fill_at := make([]int, len(frame_counts))
 	defer delete(fill_at)
-	series_loc := make([][2]u32, len(frame_counts))
-	defer delete(series_loc)
-	for si in 0 ..< len(studies) {
-		for ni in 0 ..< len(studies[si].series) {
-			ser := &studies[si].series[ni]
-			k, ok := series_index[ser.uid]
-			if !ok do continue
-			ser.frames = make([]u32, frame_counts[k])
-			series_loc[k] = {u32(si), u32(ni)}
-		}
+	for gkey in 0 ..< len(series_loc) {
+		loc := series_loc[gkey]
+		studies[loc[0]].series[loc[1]].frames = make([]u32, frame_counts[gkey])
 	}
 	for ei in 0 ..< len(entries) {
 		k := entries[ei].series
@@ -371,6 +554,50 @@ build_tree :: proc(tree: ^Study_Tree, results: []Scan_Result, _alloc: runtime.Al
 		return a.uid < b.uid
 	})
 
+	// Patient layer: sort the cards (name, unknown last), remap each
+	// study's patient index, then attach the studies in their final order.
+	slice.sort_by(patients[:], proc(a, b: Patient_Node) -> bool {
+		if a.name != b.name {
+			if a.name == "" do return false
+			if b.name == "" do return true
+			return a.name < b.name
+		}
+		return a.id < b.id
+	})
+	new_patient_index: map[Patient_Key]u32
+	defer delete(new_patient_index)
+	for p, i in patients do new_patient_index[Patient_Key{p.id, p.name}] = u32(i)
+	for si in 0 ..< len(studies) {
+		if pi, ok := new_patient_index[study_patient[si]]; ok do studies[si].patient = pi
+	}
+	counts := make([]int, len(patients))
+	defer delete(counts)
+	cursor := make([]int, len(patients))
+	defer delete(cursor)
+	for st in studies do counts[st.patient] += 1
+	for i in 0 ..< len(patients) {
+		patients[i].studies = make([]u32, counts[i])
+	}
+	for si in 0 ..< len(studies) {
+		pi := studies[si].patient
+		patients[pi].studies[cursor[pi]] = u32(si)
+		cursor[pi] += 1
+	}
+
+	// Final entry indices: after the series and study sorts, remap each
+	// entry to its (study, series, pos) so the sidebar cursor and paging
+	// never touch a stale global key.
+	for si in 0 ..< len(studies) {
+		for ni in 0 ..< len(studies[si].series) {
+			for ei, pos in studies[si].series[ni].frames {
+				entries[ei].study = u32(si)
+				entries[ei].series = u32(ni)
+				entries[ei].pos = pos
+			}
+		}
+	}
+
 	tree.entries = entries[:]
 	tree.studies = studies[:]
+	tree.patients = patients[:]
 }
